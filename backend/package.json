@@ -5,15 +5,29 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "migrate": "node database/migrate.js",
+    "seed:catalog": "node database/seed_catalog.js",
+    "test:auth": "node test-auth.js",
+    "test:stack": "node test-stack.js",
+    "test:catalog": "node test-catalog-and-dashboard.js",
+    "test:advisories": "node test-advisories.js",
+    "collect:advisories": "node scripts/collect_advisories.js",
+    "test:matches": "node test-matches.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
     "dotenv": "^18.0.10",
     "express": "^5.3.0",
+    "express-rate-limit": "^8.7.5",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^10.6.1",
     "pg": "^8.23.1"
   },
   "devDependencies": {

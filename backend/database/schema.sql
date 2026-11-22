@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email VARCHAR(255) NOT NULL,
     password_hash TEXT NOT NULL,
+    is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -14,10 +15,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique
     ON users (LOWER(email));
 
 
+-- 1.1 Email OTPs for registration, password reset, and password changes
+CREATE TABLE IF NOT EXISTS email_otps (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    otp_hash TEXT NOT NULL,
+    purpose VARCHAR(50) NOT NULL, -- 'REGISTER', 'FORGOT_PASSWORD', 'CHANGE_PASSWORD'
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempts_count INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    is_used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS email_otps_lookup_idx
+    ON email_otps (LOWER(email), purpose, is_used, expires_at);
+
+
+-- 1.2 Canonical Software Product Catalog
+CREATE TABLE IF NOT EXISTS software_catalog (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vendor VARCHAR(255),
+    product_name VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    cpe_prefix VARCHAR(255),
+    known_versions TEXT[] DEFAULT '{}',
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS software_catalog_vendor_product_lower_unique
+    ON software_catalog (COALESCE(LOWER(TRIM(vendor)), ''), LOWER(TRIM(product_name)));
+
+CREATE INDEX IF NOT EXISTS software_catalog_category_idx ON software_catalog (category);
+
+
 -- 2. Software products each user wants to monitor
 CREATE TABLE IF NOT EXISTS stack_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    catalog_product_id BIGINT REFERENCES software_catalog(id) ON DELETE SET NULL,
     vendor VARCHAR(255),
     product_name VARCHAR(255) NOT NULL,
     installed_version VARCHAR(100) NOT NULL,
@@ -45,6 +82,7 @@ CREATE TABLE IF NOT EXISTS advisories (
     severity VARCHAR(30),
     cvss_score NUMERIC(4, 1),
     remediation TEXT,
+    raw_source_text TEXT,
     published_at TIMESTAMPTZ,
     source_modified_at TIMESTAMPTZ,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -61,8 +99,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS advisories_cve_id_unique
     ON advisories(cve_id)
     WHERE cve_id IS NOT NULL;
 
+-- Prevent duplicate vendor URL entries when CVE is null
+CREATE UNIQUE INDEX IF NOT EXISTS advisories_source_url_unique
+    ON advisories(source_name, source_url)
+    WHERE cve_id IS NULL;
+
 CREATE INDEX IF NOT EXISTS advisories_published_at_idx
     ON advisories(published_at DESC);
+
+
+-- 3.1 Advisory Collection Audit Runs
+CREATE TABLE IF NOT EXISTS advisory_collection_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_name VARCHAR(255) NOT NULL,
+    source_url TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'in_progress',
+    items_collected INT NOT NULL DEFAULT 0,
+    items_new INT NOT NULL DEFAULT 0,
+    items_updated INT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS advisory_collection_runs_source_idx 
+    ON advisory_collection_runs (source_name, started_at DESC);
 
 
 -- 4. Products and affected version ranges stated in each advisory
@@ -78,6 +139,7 @@ CREATE TABLE IF NOT EXISTS affected_products (
 
     -- Keep the source's original version information for traceability.
     affected_versions_raw TEXT,
+    fixed_version VARCHAR(100),
 
     -- Optional structured bounds for version matching.
     version_start VARCHAR(100),
