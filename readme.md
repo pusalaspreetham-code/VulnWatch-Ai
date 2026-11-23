@@ -76,6 +76,16 @@ Vulnerability advisory monitoring web application.
 | `GET` | `/api/advisories/runs` | Authenticated | List past advisory collection audit runs |
 | `GET` | `/api/advisories/sources` | Authenticated | List the configured official vendor security sources |
 
+### Vulnerability Detection & Matching (`/api/matches`)
+| Method | Endpoint | Access | Purpose |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/matches/run` | Authenticated | Run deterministic version-range scan against user's monitored stack |
+| `GET` | `/api/matches` | Authenticated | List matched advisories (supports `?status=`, `?severity=`, `?search=`) |
+| `GET` | `/api/matches/summary` | Authenticated | Severity breakdown & status summary counts |
+| `GET` | `/api/matches/coverage` | Authenticated | Stack coverage breakdown (supported feeds vs pending catalog items) |
+| `GET` | `/api/matches/:id` | Authenticated | Retrieve single match with affected products & advisory details |
+| `PATCH` | `/api/matches/:id/status` | Authenticated | Update status (`vulnerable`, `confirmed`, `not_affected`, `dismissed`) with audit trail |
+
 ---
 
 ## Running the Application
@@ -92,10 +102,11 @@ npm run dev             # Starts Express API server on port 5000
 > **Running Automated Tests:**
 > ```bash
 > cd backend
-> npm run test:auth      # Tests auth flows, OTP limits, and hashing
-> npm run test:stack     # Tests stack CRUD operations and user isolation
-> npm run test:catalog   # Tests catalog search, version chips, and stack linking
+> npm run test:auth        # Tests auth flows, OTP limits, and hashing
+> npm run test:stack       # Tests stack CRUD operations and user isolation
+> npm run test:catalog     # Tests catalog search, version chips, and stack linking
 > npm run test:advisories  # Tests advisory scraping, parsing, deduplication, and audit log
+> npm run test:matches     # Tests version-range evaluation, detection, and stack coverage
 > ```
 
 > **Advisory Collection Commands:**

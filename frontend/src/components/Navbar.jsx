@@ -1,14 +1,15 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Shield, LayoutDashboard, Layers, KeyRound, LogOut } from 'lucide-react';
+import { Shield, LayoutDashboard, Layers, KeyRound, LogOut, Bell } from 'lucide-react';
 
-export default function Navbar() {
+export default function Navbar({ alertCount = 0 }) {
   const { user, logout } = useAuth();
   const location = useLocation();
 
   const isDashboardActive = location.pathname === '/' || location.pathname === '/dashboard';
   const isStackActive = location.pathname === '/stack';
+  const isAlertsActive = location.pathname === '/alerts';
 
   const scrollToSecurity = (e) => {
     if (isDashboardActive) {
@@ -45,6 +46,35 @@ export default function Navbar() {
           >
             <Layers size={15} />
             <span>Monitored Stack</span>
+          </Link>
+
+          <Link
+            to="/alerts"
+            className={`nav-tab-link ${isAlertsActive ? 'active' : ''}`}
+            style={{ position: 'relative' }}
+          >
+            <Bell size={15} />
+            <span>Alerts</span>
+            {alertCount > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                background: '#ef4444',
+                color: '#fff',
+                borderRadius: '50%',
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                width: 16,
+                height: 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                lineHeight: 1,
+              }}>
+                {alertCount > 9 ? '9+' : alertCount}
+              </span>
+            )}
           </Link>
 
           <a

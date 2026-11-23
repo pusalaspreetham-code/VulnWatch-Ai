@@ -32,6 +32,7 @@ export const matchesApi = {
     return request(qs ? `?${qs}` : '');
   },
   getMatchSummary: () => request('/summary'),
+  getCoverageReport: () => request('/coverage'),
   getMatchById: (id) => request(`/${id}`),
   updateMatchStatus: (id, status, notes) =>
     request(`/${id}/status`, {
@@ -39,3 +40,4 @@ export const matchesApi = {
       body: JSON.stringify({ status, notes }),
     }),
 };
+

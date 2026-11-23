@@ -25,7 +25,7 @@ class AdvisoryRepository {
           cve_id, source_name, source_advisory_id, source_url, title, description,
           severity, cvss_score, remediation, published_at, raw_source_text, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-        ON CONFLICT (cve_id) WHERE cve_id IS NOT NULL DO UPDATE SET
+        ON CONFLICT (cve_id, source_name) WHERE cve_id IS NOT NULL DO UPDATE SET
           source_name = EXCLUDED.source_name,
           source_advisory_id = COALESCE(EXCLUDED.source_advisory_id, advisories.source_advisory_id),
           source_url = EXCLUDED.source_url,

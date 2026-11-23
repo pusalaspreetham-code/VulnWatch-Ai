@@ -7,6 +7,7 @@ import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import StackPage from './pages/StackPage';
+import AlertsPage from './pages/AlertsPage';
 
 export default function App() {
   return (
@@ -32,6 +33,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <StackPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/alerts"
+            element={
+              <ProtectedRoute>
+                <AlertsPage />
               </ProtectedRoute>
             }
           />

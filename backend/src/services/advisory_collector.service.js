@@ -27,6 +27,22 @@ const OFFICIAL_SOURCES = [
     productName: 'Ubuntu',
     sourceUrl: 'https://ubuntu.com/security/notices',
     description: 'Canonical Ubuntu Security Notices (USN) for core packages'
+  },
+  {
+    id: 'php',
+    sourceName: 'PHP Security Announcements',
+    vendor: 'The PHP Group',
+    productName: 'PHP',
+    sourceUrl: 'https://www.php.net/archive/',
+    description: 'Official PHP security vulnerability releases and patches'
+  },
+  {
+    id: 'amazon-linux',
+    sourceName: 'Amazon Linux Security Center',
+    vendor: 'Amazon',
+    productName: 'Amazon Linux',
+    sourceUrl: 'https://alas.aws.amazon.com/alas2023.html',
+    description: 'Amazon Linux Security Bulletins (ALAS) for Amazon Linux OS'
   }
 ];
 

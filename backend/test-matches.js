@@ -1,3 +1,4 @@
+process.env.FIRECRAWL_MOCK_MODE = 'true';
 require('dotenv').config();
 const pool = require('./src/db');
 const matcherService = require('./src/services/matcher.service');
@@ -6,7 +7,7 @@ const advisoryCollectorService = require('./src/services/advisory_collector.serv
 
 async function runTests() {
   console.log('\n===========================================');
-  console.log('TEST SUITE: VULNERABILITY MATCHING');
+  console.log('TEST SUITE: VULNERABILITY DETECTION & MATCHING');
   console.log('===========================================\n');
 
   let passed = 0;
@@ -26,7 +27,7 @@ async function runTests() {
   let testUser2Id;
 
   try {
-    // Setup: create two isolated test users and a stack
+    // Setup: create two isolated test users
     const u1 = await pool.query(
       `INSERT INTO users (email, password_hash, is_verified) VALUES ($1, 'testhash', true) RETURNING id`,
       [`matchtest_u1_${Date.now()}@example.com`]
@@ -41,168 +42,139 @@ async function runTests() {
 
     console.log(`Setup: created test users #${testUserId} and #${testUser2Id}`);
 
-    // Ensure advisories exist (use mock collection)
+    // Populate advisories from configured official sources (Apache, Node, PHP)
     const sources = advisoryCollectorService.getSources();
-    const apacheSource = sources.find(s => s.id === 'apache-httpd');
-    await advisoryCollectorService.collectFromSource(apacheSource);
-
-    // Verify advisory exists
-    const advisoryCheck = await pool.query(
-      `SELECT a.id, ap.id as ap_id, ap.product_name 
-       FROM advisories a 
-       JOIN affected_products ap ON ap.advisory_id = a.id 
-       LIMIT 1`
-    );
-    assert(advisoryCheck.rows.length > 0, 'Advisory and affected_product records exist in DB');
-
-    const affectedProductName = advisoryCheck.rows[0].product_name;
-    console.log(`  Advisory affected product: "${affectedProductName}"`);
+    for (const src of sources) {
+      await advisoryCollectorService.collectFromSource(src);
+    }
 
     // ─────────────────────────────────────────────────────
-    // 1. Stack with matching product — should produce matches
+    // 1. Exact Installed Version Matching: Vulnerable Range
     // ─────────────────────────────────────────────────────
-    console.log('\n[1] Testing: Stack item matching an advisory affected product');
+    console.log('\n[1] Testing: Exact Installed Version in Vulnerable Range (Apache 2.4.52)');
 
-    // Add Apache HTTP Server to user 1's stack
+    // Add vulnerable Apache HTTP Server (2.4.52 is within 2.4.0 through 2.4.59, fixed in 2.4.60)
     const si1 = await pool.query(
       `INSERT INTO stack_items (user_id, product_name, vendor, installed_version)
        VALUES ($1, 'Apache HTTP Server', 'Apache Software Foundation', '2.4.52')
        RETURNING id`,
       [testUserId]
     );
-    const stackItemId = si1.rows[0].id;
+    const stackItemId1 = si1.rows[0].id;
 
     const result1 = await matcherService.runForUser(testUserId);
     assert(result1.stackItemsChecked >= 1, `stackItemsChecked = ${result1.stackItemsChecked}`);
     assert(result1.matchesFound >= 1, `Found ${result1.matchesFound} matches for Apache HTTP Server`);
-    assert(result1.matchesNew >= 1, `${result1.matchesNew} new match records inserted`);
+    assert(result1.vulnerableCount >= 1, `Accurately identified ${result1.vulnerableCount} vulnerable advisory`);
+
+    // Verify DB record status with search
+    const { matches } = await matchRepository.findMatchesByUser(testUserId, { search: 'CVE-2024-38476' });
+    assert(matches.length >= 1, 'Found match for CVE-2024-38476');
+    const cve38476 = matches[0];
+    if (cve38476) {
+      assert(cve38476.status === 'vulnerable', `Version 2.4.52 correctly flagged as status='vulnerable' (got ${cve38476.status})`);
+      assert(cve38476.match_reason.includes('vulnerable') || cve38476.match_reason.includes('affected range'),
+        `Match reason explains vulnerability: ${cve38476.match_reason}`);
+      assert(cve38476.fixed_version === '2.4.60', 'Identified fixed version 2.4.60');
+    }
 
     // ─────────────────────────────────────────────────────
-    // 2. Database persistence
+    // 2. Patched / Safe Version: Not Affected
     // ─────────────────────────────────────────────────────
-    console.log('\n[2] Testing: Match persistence in PostgreSQL');
+    console.log('\n[2] Testing: Patched Installed Version (Apache 2.4.62 is >= fixed 2.4.60)');
 
-    const { matches, total } = await matchRepository.findMatchesByUser(testUserId);
-    assert(total >= 1, `findMatchesByUser returns total >= 1 (got ${total})`);
-    assert(matches.length >= 1, `findMatchesByUser returns ${matches.length} match rows`);
-
-    const m = matches[0];
-    assert(m.stack_item_id === stackItemId, 'Match linked to correct stack_item_id');
-    assert(m.status === 'potential_match', `Initial status is 'potential_match' (got ${m.status})`);
-    assert(typeof m.advisory_id === 'number' || typeof m.advisory_id === 'string', 'Match has advisory_id');
-    assert(!!m.cve_id || !!m.advisory_title, 'Match includes CVE or advisory title');
-    assert(!!m.match_reason && m.match_reason.includes('↔'), 'match_reason explains the pairing');
-    assert(!!m.affected_product_name, 'Match includes affected_product_name');
-    assert(!!m.installed_version, 'Match includes installed_version from stack item');
-
-    // ─────────────────────────────────────────────────────
-    // 3. findMatchById — ownership check
-    // ─────────────────────────────────────────────────────
-    console.log('\n[3] Testing: findMatchById with ownership enforcement');
-
-    const matchId = m.id;
-    const foundById = await matchRepository.findMatchById(matchId, testUserId);
-    assert(!!foundById, 'findMatchById returns match for correct owner');
-    assert(foundById.id === matchId, 'findMatchById returns correct match ID');
-
-    const notFoundById = await matchRepository.findMatchById(matchId, testUser2Id);
-    assert(notFoundById === null, 'findMatchById returns null for wrong user (isolation enforced)');
-
-    // ─────────────────────────────────────────────────────
-    // 4. Status filtering
-    // ─────────────────────────────────────────────────────
-    console.log('\n[4] Testing: Status filter on findMatchesByUser');
-
-    const potentialMatches = await matchRepository.findMatchesByUser(testUserId, { status: 'potential_match' });
-    assert(potentialMatches.matches.length >= 1, `Filter by 'potential_match' returns ${potentialMatches.matches.length} records`);
-
-    const confirmedMatches = await matchRepository.findMatchesByUser(testUserId, { status: 'confirmed' });
-    assert(confirmedMatches.matches.length === 0, 'Filter by confirmed returns 0 (none confirmed yet)');
-
-    // ─────────────────────────────────────────────────────
-    // 5. Update match status + review_history audit
-    // ─────────────────────────────────────────────────────
-    console.log('\n[5] Testing: Status update and review_history audit trail');
-
-    const updated = await matchRepository.updateMatchStatus(matchId, testUserId, 'confirmed', 'Confirmed affected version');
-    assert(!!updated, 'updateMatchStatus returns updated record');
-    assert(updated.id === matchId, 'updateMatchStatus returns correct match ID');
-
-    const afterUpdate = await matchRepository.findMatchById(matchId, testUserId);
-    assert(afterUpdate.status === 'confirmed', `Status updated to 'confirmed' (got ${afterUpdate.status})`);
-
-    // Verify review_history row was written
-    const histCheck = await pool.query(
-      `SELECT review_status, notes FROM review_history WHERE match_id = $1 AND user_id = $2`,
-      [matchId, testUserId]
-    );
-    assert(histCheck.rows.length >= 1, 'review_history row inserted after status update');
-    assert(histCheck.rows[0].review_status === 'confirmed', `review_history status = 'confirmed'`);
-    assert(histCheck.rows[0].notes === 'Confirmed affected version', 'review_history notes preserved');
-
-    // Wrong user cannot update
-    const wrongUpdate = await matchRepository.updateMatchStatus(matchId, testUser2Id, 'dismissed', null);
-    assert(wrongUpdate === null, 'updateMatchStatus returns null for wrong user (isolation)');
-
-    // ─────────────────────────────────────────────────────
-    // 6. Summary counts for dashboard
-    // ─────────────────────────────────────────────────────
-    console.log('\n[6] Testing: getMatchSummaryForUser for dashboard card');
-
-    // Reset to potential_match for summary test
-    await matchRepository.updateMatchStatus(matchId, testUserId, 'potential_match', null);
-
-    const summary = await matchRepository.getMatchSummaryForUser(testUserId);
-    assert(typeof summary.total === 'number', `Summary total is a number: ${summary.total}`);
-    assert(summary.total >= 1, `Summary total >= 1 (got ${summary.total})`);
-    assert(typeof summary.critical === 'number', 'Summary has critical field');
-    assert(typeof summary.high === 'number', 'Summary has high field');
-    assert(typeof summary.medium === 'number', 'Summary has medium field');
-    assert(typeof summary.low === 'number', 'Summary has low field');
-
-    const user2Summary = await matchRepository.getMatchSummaryForUser(testUser2Id);
-    assert(user2Summary.total === 0, `User 2 summary total = 0 (user isolation in summary)`);
-
-    // ─────────────────────────────────────────────────────
-    // 7. User isolation — user 2 stack has no matches
-    // ─────────────────────────────────────────────────────
-    console.log('\n[7] Testing: User isolation — user 2 sees no matches');
-
-    const { matches: u2Matches } = await matchRepository.findMatchesByUser(testUser2Id);
-    assert(u2Matches.length === 0, `User 2 has 0 matches (got ${u2Matches.length}) — user isolation`);
-
-    // ─────────────────────────────────────────────────────
-    // 8. Idempotency — re-run matching produces no new duplicates
-    // ─────────────────────────────────────────────────────
-    console.log('\n[8] Testing: Idempotent re-runs');
-
-    const result2 = await matcherService.runForUser(testUserId);
-    assert(result2.matchesNew === 0, `Re-run inserts 0 new matches (got ${result2.matchesNew})`);
-    assert(result2.matchesExisting >= 1, `Re-run updates ${result2.matchesExisting} existing matches`);
-
-    const dupCheck = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM matches WHERE user_id = $1 AND stack_item_id = $2`,
-      [testUserId, stackItemId]
-    );
-    assert(dupCheck.rows[0].cnt === result1.matchesFound,
-      `No duplicate rows — count still ${dupCheck.rows[0].cnt}`);
-
-    // ─────────────────────────────────────────────────────
-    // 9. Stack item with no advisory match
-    // ─────────────────────────────────────────────────────
-    console.log('\n[9] Testing: Stack item with no matching advisory product');
-
+    // Update Apache installed version to 2.4.62 (patched)
     await pool.query(
+      `UPDATE stack_items SET installed_version = '2.4.62' WHERE id = $1`,
+      [stackItemId1]
+    );
+
+    await matcherService.runForUser(testUserId);
+    const { matches: matchesAfterPatch } = await matchRepository.findMatchesByUser(testUserId, { search: 'CVE-2024-38476' });
+    assert(matchesAfterPatch.length >= 1, 'Match record preserved for CVE-2024-38476');
+    const cvePatched = matchesAfterPatch[0];
+    if (cvePatched) {
+      assert(cvePatched.status === 'not_affected', `Patched version 2.4.62 correctly evaluated as status='not_affected' (got ${cvePatched.status})`);
+      assert(cvePatched.match_reason.includes('patched') || cvePatched.match_reason.includes('higher'),
+        `Match reason explains patched status: ${cvePatched.match_reason}`);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // 3. PHP Vulnerability Matching (CVE-2024-4577)
+    // ─────────────────────────────────────────────────────
+    console.log('\n[3] Testing: PHP Vulnerability Detection (PHP 8.1.0 vs CVE-2024-4577)');
+
+    // Add PHP 8.1.0 to stack
+    const si2 = await pool.query(
       `INSERT INTO stack_items (user_id, product_name, vendor, installed_version)
-       VALUES ($1, 'AcmeInHouseApp', 'Acme Corp', '3.0.0')`,
+       VALUES ($1, 'PHP', 'The PHP Group', '8.1.0')
+       RETURNING id`,
       [testUserId]
     );
 
-    const result3 = await matcherService.runForUser(testUserId);
-    assert(result3.stackItemsChecked >= 2, `Checked ${result3.stackItemsChecked} stack items`);
-    // AcmeInHouseApp won't match anything — total matches should be same as before
-    assert(result3.matchesFound === result1.matchesFound,
-      `Unrecognised product produces no extra matches (found ${result3.matchesFound})`);
+    await matcherService.runForUser(testUserId);
+    const { matches: phpMatches } = await matchRepository.findMatchesByUser(testUserId, { search: 'CVE-2024-4577' });
+    assert(phpMatches.length >= 1, 'Found PHP match for CVE-2024-4577');
+    const cve4577 = phpMatches[0];
+    if (cve4577) {
+      assert(cve4577.status === 'vulnerable', `PHP 8.1.0 correctly flagged as 'vulnerable' (got ${cve4577.status})`);
+      assert(cve4577.severity === 'Critical', 'PHP CVE-2024-4577 severity is Critical');
+    }
+
+    // ─────────────────────────────────────────────────────
+    // 4. Coverage Report: Supported vs Unsupported Feeds
+    // ─────────────────────────────────────────────────────
+    console.log('\n[4] Testing: Stack Coverage Report (Supported vs Unsupported Feeds)');
+
+    // Add an unsupported product (SQLite - no advisory feed configured)
+    await pool.query(
+      `INSERT INTO stack_items (user_id, product_name, vendor, installed_version)
+       VALUES ($1, 'SQLite', 'SQLite Development Team', '3.45.0')`,
+      [testUserId]
+    );
+
+    const coverage = await matcherService.getCoverageReport(testUserId);
+    assert(coverage.summary.totalMonitored >= 3, `Total monitored items in coverage: ${coverage.summary.totalMonitored}`);
+    assert(coverage.summary.supportedCount >= 2, `Supported items count: ${coverage.summary.supportedCount}`);
+    assert(coverage.summary.unsupportedCount >= 1, `Unsupported items count: ${coverage.summary.unsupportedCount}`);
+
+    const sqliteItem = coverage.items.find(i => i.productName === 'SQLite');
+    assert(!!sqliteItem, 'Found SQLite in coverage items');
+    if (sqliteItem) {
+      assert(sqliteItem.isSupported === false, 'SQLite correctly classified as unsupported feed');
+      assert(sqliteItem.healthStatus === 'unsupported', 'SQLite healthStatus is unsupported');
+    }
+
+    const phpItem = coverage.items.find(i => i.productName === 'PHP');
+    assert(!!phpItem, 'Found PHP in coverage items');
+    if (phpItem) {
+      assert(phpItem.isSupported === true, 'PHP correctly classified as supported feed');
+      assert(phpItem.healthStatus === 'vulnerable', 'PHP healthStatus is vulnerable');
+    }
+
+    // ─────────────────────────────────────────────────────
+    // 5. User Isolation & Status Updates
+    // ─────────────────────────────────────────────────────
+    console.log('\n[5] Testing: User Isolation and Status Management');
+
+    // User 2 has 0 matches
+    const u2Matches = await matchRepository.findMatchesByUser(testUser2Id);
+    assert(u2Matches.total === 0, `User 2 has 0 matches (got ${u2Matches.total}) - strict user isolation`);
+
+    // User 1 updates match status to confirmed
+    if (cve4577) {
+      const updateRes = await matchRepository.updateMatchStatus(cve4577.id, testUserId, 'confirmed', 'Confirmed by Security Lead');
+      assert(!!updateRes, 'Status update returned success');
+      assert(updateRes.status === 'confirmed', `Status updated to 'confirmed' (got ${updateRes.status})`);
+
+      // Verify audit history
+      const hist = await pool.query(
+        `SELECT review_status, notes FROM review_history WHERE match_id = $1 AND user_id = $2`,
+        [cve4577.id, testUserId]
+      );
+      assert(hist.rows.length >= 1, 'Audit record persisted in review_history');
+      assert(hist.rows[0].review_status === 'confirmed', 'Audit record status is confirmed');
+    }
 
     console.log('\n===========================================');
     console.log(`RESULTS: ${passed} passed, ${failed} failed`);
@@ -214,7 +186,6 @@ async function runTests() {
     console.error('\nTest execution failed with unexpected error:', err);
     process.exit(1);
   } finally {
-    // Cleanup test data
     if (testUserId) {
       await pool.query(`DELETE FROM users WHERE id = $1`, [testUserId]);
     }

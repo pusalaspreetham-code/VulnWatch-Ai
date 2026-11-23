@@ -10,10 +10,13 @@ router.use(authMiddleware);
 // Summary for dashboard
 router.get('/summary', (req, res, next) => matchController.getMatchSummary(req, res, next));
 
+// Coverage report for monitored stack
+router.get('/coverage', (req, res, next) => matchController.getCoverageReport(req, res, next));
+
 // Trigger matching for the logged-in user
 router.post('/run', (req, res, next) => matchController.runMatching(req, res, next));
 
-// List all matches (with optional ?status= filter)
+// List all matches (with optional ?status=, ?severity=, ?search=)
 router.get('/', (req, res, next) => matchController.getMatches(req, res, next));
 
 // Single match detail
