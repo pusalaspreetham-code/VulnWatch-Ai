@@ -66,8 +66,8 @@ class MatchController {
   async getMatchSummary(req, res, next) {
     try {
       const userId = req.user.id;
-      const summary = await matchRepository.getMatchSummaryForUser(userId);
-      return res.status(200).json({ summary });
+      const data = await matcherService.getProductScanTargets(userId);
+      return res.status(200).json({ summary: data.summary });
     } catch (err) {
       next(err);
     }
@@ -80,8 +80,23 @@ class MatchController {
   async getCoverageReport(req, res, next) {
     try {
       const userId = req.user.id;
-      const coverage = await matcherService.getCoverageReport(userId);
-      return res.status(200).json(coverage);
+      const data = await matcherService.getProductScanTargets(userId);
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * GET /api/matches/products
+   * Product-level scan targets: each monitored product as its own distinct scan target,
+   * deduplicated by underlying vulnerability with severity breakdowns and advisory details.
+   */
+  async getProductScanTargets(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const data = await matcherService.getProductScanTargets(userId);
+      return res.status(200).json(data);
     } catch (err) {
       next(err);
     }

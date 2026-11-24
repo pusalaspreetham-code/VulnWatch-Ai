@@ -13,6 +13,15 @@ class AdvisoryController {
 
   async triggerCollection(req, res, next) {
     try {
+      // Only admins can trigger global advisory collection
+      const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+      const userEmail = (req.user && req.user.email || '').toLowerCase();
+      if (adminEmails.length > 0 && !adminEmails.includes(userEmail)) {
+        return res.status(403).json({
+          message: 'Access denied. Advisory collection is restricted to administrators. Contact your system administrator.',
+        });
+      }
+
       const { sourceId } = req.body || {};
       const sources = advisoryCollectorService.getSources();
 

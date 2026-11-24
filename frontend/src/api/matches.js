@@ -32,6 +32,7 @@ export const matchesApi = {
     return request(qs ? `?${qs}` : '');
   },
   getMatchSummary: () => request('/summary'),
+  getProductScanTargets: () => request('/products'),
   getCoverageReport: () => request('/coverage'),
   getMatchById: (id) => request(`/${id}`),
   explainMatch: (id, refresh = false) =>

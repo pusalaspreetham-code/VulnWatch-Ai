@@ -25,6 +25,18 @@ class CatalogService {
   async getCategories() {
     return catalogRepository.getCategories();
   }
+
+  /**
+   * Resolves a user-typed name to its canonical catalog entry if one exists
+   */
+  async resolveCanonical(name) {
+    if (!name || !name.trim()) return null;
+    return catalogRepository.findByCanonicalOrAlias(name);
+  }
+
+  async registerProduct(data) {
+    return catalogRepository.registerProduct(data);
+  }
 }
 
 module.exports = new CatalogService();

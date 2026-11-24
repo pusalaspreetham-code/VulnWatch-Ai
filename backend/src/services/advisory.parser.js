@@ -413,30 +413,57 @@ class AdvisoryParser {
         remediation = remMatch[1].trim();
       }
 
-      const idToUse = cves.length > 0 ? cves[0] : sourceAdvisoryId;
-
-      advisories.push({
-        cveId: cves.length > 0 ? cves[0] : null,
-        sourceName: 'Amazon Linux Security Center',
-        sourceAdvisoryId: sourceAdvisoryId || idToUse,
-        sourceUrl,
-        title: `${sourceAdvisoryId ? sourceAdvisoryId + ': ' : ''}${title}`,
-        description: section.slice(0, 2000).trim(),
-        severity,
-        cvssScore,
-        remediation,
-        publishedAt,
-        rawSourceText: section,
-        affectedProducts: [
-          {
-            vendor,
-            productName,
-            cpe,
-            affectedVersionsRaw,
-            fixedVersion,
-          },
-        ],
-      });
+      // Emit one advisory record per CVE in the ALAS section (bug fix: previously only stored cves[0])
+      if (cves.length > 0) {
+        for (const cve of cves) {
+          advisories.push({
+            cveId: cve,
+            sourceName: 'Amazon Linux Security Center',
+            sourceAdvisoryId: sourceAdvisoryId || cve,
+            sourceUrl,
+            title: `${sourceAdvisoryId ? sourceAdvisoryId + ': ' : ''}${title}`,
+            description: section.slice(0, 2000).trim(),
+            severity,
+            cvssScore,
+            remediation,
+            publishedAt,
+            rawSourceText: section,
+            affectedProducts: [
+              {
+                vendor,
+                productName,
+                cpe,
+                affectedVersionsRaw,
+                fixedVersion,
+              },
+            ],
+          });
+        }
+      } else if (sourceAdvisoryId) {
+        // No CVEs found — store the ALAS advisory without a CVE ID
+        advisories.push({
+          cveId: null,
+          sourceName: 'Amazon Linux Security Center',
+          sourceAdvisoryId,
+          sourceUrl,
+          title: `${sourceAdvisoryId}: ${title}`,
+          description: section.slice(0, 2000).trim(),
+          severity,
+          cvssScore,
+          remediation,
+          publishedAt,
+          rawSourceText: section,
+          affectedProducts: [
+            {
+              vendor,
+              productName,
+              cpe,
+              affectedVersionsRaw,
+              fixedVersion,
+            },
+          ],
+        });
+      }
     }
 
     return advisories;

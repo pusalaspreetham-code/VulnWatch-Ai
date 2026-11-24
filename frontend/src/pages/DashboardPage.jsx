@@ -23,8 +23,11 @@ import {
   CheckCircle2,
   HelpCircle,
   ChevronDown,
+  ExternalLink,
+  Sparkles,
 } from 'lucide-react';
 import OtpInput from '../components/OtpInput';
+import AiExplanationModal from '../components/AiExplanationModal';
 
 // ─── Collapsible Section ──────────────────────────────────────────────────────
 function CollapsibleSection({ icon, title, badge, defaultOpen = false, children }) {
@@ -86,6 +89,71 @@ export default function DashboardPage() {
   const [loadingAlerts, setLoadingAlerts] = useState(true);
   const [runningMatch, setRunningMatch] = useState(false);
   const [matchMessage, setMatchMessage] = useState('');
+  const [expandedProductIds, setExpandedProductIds] = useState({});
+
+  const toggleProductExpand = (id) => {
+    setExpandedProductIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  // Gemini AI Explanation Modal State
+  const [modalMatch, setModalMatch]   = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [aiLoading, setAiLoading]     = useState({});
+  const [aiData, setAiData]           = useState({});
+  const [aiError, setAiError]         = useState({});
+
+  const handleOpenAiModal = (vuln) => {
+    const matchObj = {
+      id: vuln.primaryMatchId || vuln.key,
+      cve_id: vuln.cveId || null,
+      advisory_title: vuln.title,
+      severity: vuln.severity,
+      status: vuln.status,
+      match_reason: vuln.matchReason,
+      advisory_description: vuln.description,
+      fixed_version: vuln.fixedVersion,
+      remediation: vuln.remediation,
+      source_url: vuln.sourceUrl || (vuln.sources && vuln.sources[0]?.sourceUrl),
+      source_name: vuln.sources && vuln.sources[0]?.sourceName,
+    };
+    setModalMatch(matchObj);
+    setIsModalOpen(true);
+
+    if (vuln.aiExplanation && !aiData[matchObj.id]) {
+      setAiData((prev) => ({
+        ...prev,
+        [matchObj.id]: {
+          success: true,
+          configured: true,
+          explanation: vuln.aiExplanation,
+          cached: true,
+          sourceUrl: matchObj.source_url,
+          cveId: matchObj.cve_id,
+        },
+      }));
+    } else if (vuln.primaryMatchId && !aiData[matchObj.id] && !aiLoading[matchObj.id]) {
+      handleExplainWithAi(matchObj.id, false);
+    }
+  };
+
+  const handleExplainWithAi = async (matchId, refresh = false) => {
+    setAiLoading((prev) => ({ ...prev, [matchId]: true }));
+    setAiError((prev) => ({ ...prev, [matchId]: '' }));
+    try {
+      const res = await matchesApi.explainMatch(matchId, refresh);
+      setAiData((prev) => ({ ...prev, [matchId]: res }));
+      if (!res.success && res.message) {
+        setAiError((prev) => ({ ...prev, [matchId]: res.message }));
+      }
+    } catch (err) {
+      setAiError((prev) => ({ ...prev, [matchId]: err.message || 'Failed to generate AI explanation.' }));
+    } finally {
+      setAiLoading((prev) => ({ ...prev, [matchId]: false }));
+    }
+  };
 
   // Change password state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -184,16 +252,18 @@ export default function DashboardPage() {
     ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : 'Active';
 
-  const vulnerableCount = alertSummary ? (alertSummary.vulnerable || 0) + (alertSummary.confirmed || 0) : 0;
-  const isAllClear = !loadingAlerts && alertSummary && vulnerableCount === 0 && alertSummary.total >= 0;
-  const coverageItems = coverageData?.items || [];
+  const vulnerableCount = alertSummary ? (alertSummary.total || alertSummary.vulnerableCount || 0) : 0;
+  const needsReviewCount = alertSummary ? (alertSummary.needsReview || alertSummary.needsReviewCount || 0) : 0;
+  const isAllClear = !loadingAlerts && alertSummary && vulnerableCount === 0;
+  const coverageProducts = coverageData?.products || coverageData?.items || [];
 
   const severityTiles = [
     { label: 'Critical', count: alertSummary?.critical || 0, activeColor: '#dc2626', activeBg: '#fef2f2', activeBorder: '#fecaca', nav: '/alerts?severity=Critical' },
     { label: 'High',     count: alertSummary?.high     || 0, activeColor: '#ea580c', activeBg: '#fff7ed', activeBorder: '#fed7aa', nav: '/alerts?severity=High'     },
     { label: 'Medium',   count: alertSummary?.medium   || 0, activeColor: '#d97706', activeBg: '#fffbeb', activeBorder: '#fde68a', nav: '/alerts?severity=Medium'   },
     { label: 'Low',      count: alertSummary?.low      || 0, activeColor: '#16a34a', activeBg: '#f0fdf4', activeBorder: '#bbf7d0', nav: '/alerts?severity=Low'      },
-    { label: 'All',      count: alertSummary?.total    || 0, activeColor: '#6366f1', activeBg: '#eef2ff', activeBorder: '#c7d2fe', nav: '/alerts'                   },
+    { label: 'Needs Review', count: needsReviewCount,  activeColor: '#d97706', activeBg: '#fffbeb', activeBorder: '#fde68a', nav: '/alerts?status=potential_match' },
+    { label: 'Verified Total', count: vulnerableCount, activeColor: '#0f172a', activeBg: '#f1f5f9', activeBorder: '#cbd5e1', nav: '/alerts?status=vulnerable' },
   ];
 
   return (
@@ -344,90 +414,398 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* ── Monitored Stack Coverage (collapsible) ── */}
-        {coverageItems.length > 0 && (
-          <CollapsibleSection
-            icon={<Layers size={18} color="#0f172a" strokeWidth={2.2} />}
-            title="Stack Coverage"
-            defaultOpen={false}
-            badge={
-              <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '2px 8px', fontWeight: 600 }}>
-                {coverageItems.length} products
-              </span>
-            }
-          >
-            {coverageData?.summary && (
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                <span style={{ fontSize: '0.78rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
-                  Active Feeds: <strong>{coverageData.summary.supportedCount || 0}</strong>
-                </span>
-                <span style={{ fontSize: '0.78rem', background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
-                  Pending Feeds: <strong>{coverageData.summary.unsupportedCount || 0}</strong>
+        {/* ── Monitored Product Scan Targets (Separate target per monitored product) ── */}
+        <div style={{
+          background: '#fff',
+          border: '1px solid #e2e8f0',
+          borderRadius: 14,
+          padding: '24px',
+          boxShadow: '0 1px 4px rgba(15,23,42,0.05)',
+        }}>
+          {/* Section header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Layers size={20} color="#0f172a" strokeWidth={2.2} />
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>
+                  Monitored Product Scan Targets
+                </h2>
+                <span style={{ fontSize: '0.75rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '2px 8px', fontWeight: 600 }}>
+                  {coverageProducts.length} scan targets
                 </span>
               </div>
-            )}
+              <p style={{ color: '#64748b', fontSize: '0.825rem', marginTop: 4 }}>
+                Each monitored software product is evaluated as a distinct scan target with deduplicated advisory matching
+              </p>
+            </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {coverageItems.map((item) => {
-                const isVulnerable = item.healthStatus === 'vulnerable';
-                const isSafe = item.healthStatus === 'safe';
-                const isNeedsReview = item.healthStatus === 'needs_review';
-                const isUnsupported = !item.isSupported;
+            <Link to="/stack" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+              border: '1px solid #e2e8f0', borderRadius: 8, textDecoration: 'none',
+              fontSize: '0.8rem', fontWeight: 600, color: '#0f172a', background: '#f8fafc',
+            }}>
+              <Plus size={13} /> Manage Software Stack
+            </Link>
+          </div>
+
+          {/* Product targets list */}
+          {coverageProducts.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px 20px', color: '#94a3b8', fontSize: '0.9rem' }}>
+              No software registered in your stack. Add products in Stack Management to begin scanning.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {coverageProducts.map((product) => {
+                const isExpanded = !!expandedProductIds[product.id];
+                const isVulnerable = product.healthStatus === 'vulnerable' || product.vulnerabilityCount > 0;
+                const isNeedsReview = product.healthStatus === 'needs_review' || (!isVulnerable && product.needsReviewCount > 0);
+                const isSafe = product.healthStatus === 'safe' || (product.isSupported && !isVulnerable && !isNeedsReview);
+                const isUnsupported = !product.isSupported || product.healthStatus === 'coverage_unavailable';
+
                 return (
-                  <div key={item.id} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '10px 14px',
-                    background: '#fafbfd',
-                    border: `1px solid ${isVulnerable ? '#fecaca' : '#e2e8f0'}`,
-                    borderLeft: `3px solid ${isVulnerable ? '#ef4444' : isSafe ? '#10b981' : isNeedsReview ? '#f59e0b' : '#cbd5e1'}`,
-                    borderRadius: 8, gap: 10, flexWrap: 'wrap',
-                  }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.875rem' }}>{item.productName}</span>
-                        <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#475569', borderRadius: 6, padding: '1px 7px', fontFamily: 'monospace', fontWeight: 600 }}>
-                          v{item.installedVersion}
-                        </span>
+                  <div
+                    key={product.id}
+                    style={{
+                      background: '#fff',
+                      border: `1px solid ${isVulnerable ? '#fecaca' : isNeedsReview ? '#fde68a' : '#e2e8f0'}`,
+                      borderLeft: `5px solid ${isVulnerable ? '#ef4444' : isNeedsReview ? '#f59e0b' : isSafe ? '#10b981' : '#94a3b8'}`,
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      boxShadow: isVulnerable ? '0 2px 10px rgba(239,68,68,0.06)' : '0 1px 3px rgba(15,23,42,0.04)',
+                    }}
+                  >
+                    {/* Card Top / Header */}
+                    <div style={{ padding: '16px 20px', background: '#fcfdfe', borderBottom: '1px solid #f1f5f9' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                        {/* Title & Version info */}
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#0f172a' }}>
+                              {product.productName}
+                            </span>
+                            <span style={{
+                              fontSize: '0.78rem', background: '#f1f5f9', color: '#334155',
+                              border: '1px solid #cbd5e1', borderRadius: 6, padding: '2px 8px',
+                              fontFamily: 'monospace', fontWeight: 700,
+                            }}>
+                              v{product.installedVersion}
+                            </span>
+                            {product.ecosystem && product.ecosystem !== 'General Software' && (
+                              <span style={{
+                                fontSize: '0.72rem', background: '#eff6ff', color: '#2563eb',
+                                border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 8px', fontWeight: 600,
+                              }}>
+                                {product.ecosystem}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: 4 }}>
+                            Vendor: <strong>{product.vendor || 'Generic'}</strong>
+                            {product.originalInput && product.originalInput !== product.productName && (
+                              <span style={{ marginLeft: 8, color: '#475569' }}>(Input: {product.originalInput})</span>
+                            )}
+                            {product.category && product.category !== 'General Software' && (
+                              <span style={{ marginLeft: 8, color: '#94a3b8' }}>• {product.category}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Status Badge & Actions */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          {isVulnerable && (
+                            <span style={{
+                              background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
+                              borderRadius: 20, fontSize: '0.75rem', fontWeight: 800, padding: '4px 12px',
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                            }}>
+                              <AlertTriangle size={13} /> {product.vulnerabilityCount} Confirmed Vulnerable
+                            </span>
+                          )}
+                          {isNeedsReview && !isVulnerable && (
+                            <span style={{
+                              background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a',
+                              borderRadius: 20, fontSize: '0.75rem', fontWeight: 700, padding: '4px 12px',
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                            }}>
+                              <AlertCircle size={13} /> {product.needsReviewCount} Needs Review
+                            </span>
+                          )}
+                          {isSafe && (
+                            <span style={{
+                              background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0',
+                              borderRadius: 20, fontSize: '0.75rem', fontWeight: 700, padding: '4px 12px',
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                            }}>
+                              <Check size={13} /> Verified Safe (0 Advisories)
+                            </span>
+                          )}
+                          {isUnsupported && (
+                            <span style={{
+                              background: '#f8fafc', color: '#64748b', border: '1px solid #e2e8f0',
+                              borderRadius: 20, fontSize: '0.75rem', fontWeight: 600, padding: '4px 12px',
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                            }}>
+                              <HelpCircle size={13} /> Coverage Unavailable
+                            </span>
+                          )}
+
+                          <button
+                            onClick={() => toggleProductExpand(product.id)}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                              padding: '6px 12px', background: '#f8fafc', border: '1px solid #cbd5e1',
+                              borderRadius: 8, fontSize: '0.78rem', fontWeight: 600, color: '#334155',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span>{isExpanded ? 'Hide Advisories' : `Advisories (${(product.vulnerabilities?.length || 0) + (product.needsReview?.length || 0)})`}</span>
+                            <ChevronDown size={14} style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                          </button>
+
+                          <Link
+                            to={`/alerts?search=${encodeURIComponent(product.productName)}`}
+                            style={{
+                              fontSize: '0.78rem', color: '#4f46e5', fontWeight: 700,
+                              textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            Alerts <ArrowRight size={13} />
+                          </Link>
+                        </div>
                       </div>
-                      {item.vendor && <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 2 }}>{item.vendor}</div>}
+
+                      {/* Product Severity Breakdown Pills */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          Verified Severity:
+                        </span>
+                        <span style={{
+                          fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                          background: (product.severityBreakdown?.critical || 0) > 0 ? '#fef2f2' : '#f8fafc',
+                          color: (product.severityBreakdown?.critical || 0) > 0 ? '#dc2626' : '#94a3b8',
+                          border: `1px solid ${(product.severityBreakdown?.critical || 0) > 0 ? '#fecaca' : '#e2e8f0'}`,
+                        }}>
+                          Critical: {product.severityBreakdown?.critical || 0}
+                        </span>
+                        <span style={{
+                          fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                          background: (product.severityBreakdown?.high || 0) > 0 ? '#fff7ed' : '#f8fafc',
+                          color: (product.severityBreakdown?.high || 0) > 0 ? '#ea580c' : '#94a3b8',
+                          border: `1px solid ${(product.severityBreakdown?.high || 0) > 0 ? '#fed7aa' : '#e2e8f0'}`,
+                        }}>
+                          High: {product.severityBreakdown?.high || 0}
+                        </span>
+                        <span style={{
+                          fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                          background: (product.severityBreakdown?.medium || 0) > 0 ? '#fffbeb' : '#f8fafc',
+                          color: (product.severityBreakdown?.medium || 0) > 0 ? '#d97706' : '#94a3b8',
+                          border: `1px solid ${(product.severityBreakdown?.medium || 0) > 0 ? '#fde68a' : '#e2e8f0'}`,
+                        }}>
+                          Medium: {product.severityBreakdown?.medium || 0}
+                        </span>
+                        <span style={{
+                          fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                          background: (product.severityBreakdown?.low || 0) > 0 ? '#f0fdf4' : '#f8fafc',
+                          color: (product.severityBreakdown?.low || 0) > 0 ? '#16a34a' : '#94a3b8',
+                          border: `1px solid ${(product.severityBreakdown?.low || 0) > 0 ? '#bbf7d0' : '#e2e8f0'}`,
+                        }}>
+                          Low: {product.severityBreakdown?.low || 0}
+                        </span>
+                        {product.needsReviewCount > 0 && (
+                          <span style={{
+                            fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                            background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a',
+                          }}>
+                            Needs Review: {product.needsReviewCount}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {isVulnerable && (
-                        <span style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700, padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <AlertTriangle size={11} /> Vulnerable ({item.vulnerabilitiesCount || 1})
-                        </span>
-                      )}
-                      {isNeedsReview && (
-                        <span style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', borderRadius: 20, fontSize: '0.72rem', fontWeight: 600, padding: '2px 10px' }}>Review</span>
-                      )}
-                      {isSafe && (
-                        <span style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: 20, fontSize: '0.72rem', fontWeight: 600, padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <Check size={11} /> Safe
-                        </span>
-                      )}
-                      {isUnsupported && (
-                        <span style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 20, fontSize: '0.72rem', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                          title="No official advisory feed configured for this vendor">
-                          <HelpCircle size={11} /> Feed Pending
-                        </span>
-                      )}
-                      <Link to="/alerts" style={{ fontSize: '0.75rem', color: '#6366f1', fontWeight: 600, textDecoration: 'none' }}>Alerts →</Link>
-                    </div>
+                    {/* Expandable Deduplicated Advisories Details */}
+                    {isExpanded && (
+                      <div style={{ padding: '16px 20px', background: '#ffffff' }}>
+                        {/* Confirmed Vulnerabilities */}
+                        {product.vulnerabilities && product.vulnerabilities.length > 0 && (
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#dc2626', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Confirmed Vulnerabilities ({product.vulnerabilities.length})
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {product.vulnerabilities.map((vuln) => (
+                                <div
+                                  key={vuln.key}
+                                  style={{
+                                    border: '1px solid #fecaca',
+                                    borderRadius: 8,
+                                    padding: '12px 16px',
+                                    background: '#fff9f9',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                      <span style={{
+                                        fontFamily: 'monospace', fontWeight: 800, fontSize: '0.825rem',
+                                        background: '#dc2626', color: '#fff', borderRadius: 4, padding: '2px 7px',
+                                      }}>
+                                        {vuln.cveId || vuln.key}
+                                      </span>
+                                      <span style={{
+                                        fontSize: '0.72rem', fontWeight: 700, borderRadius: 20, padding: '2px 8px',
+                                        background: vuln.severity === 'Critical' ? '#fee2e2' : vuln.severity === 'High' ? '#ffedd5' : '#fef3c7',
+                                        color: vuln.severity === 'Critical' ? '#991b1b' : vuln.severity === 'High' ? '#9a3412' : '#92400e',
+                                        border: `1px solid ${vuln.severity === 'Critical' ? '#fca5a5' : vuln.severity === 'High' ? '#fdba74' : '#fcd34d'}`,
+                                      }}>
+                                        {vuln.severity}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenAiModal(vuln)}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 5,
+                                          background: '#f5f3ff',
+                                          border: '1px solid #ddd6fe',
+                                          color: '#7c3aed',
+                                          borderRadius: 6,
+                                          padding: '3px 10px',
+                                          fontSize: '0.75rem',
+                                          fontWeight: 700,
+                                          cursor: 'pointer',
+                                        }}
+                                        title="Open full AI advisory analysis in popup modal"
+                                      >
+                                        <Sparkles size={12} color="#7c3aed" />
+                                        <span>AI Analysis</span>
+                                      </button>
+                                      {vuln.fixedVersion && (
+                                        <span style={{ fontSize: '0.75rem', background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', borderRadius: 6, padding: '2px 8px', fontWeight: 700 }}>
+                                          Fixed in: v{vuln.fixedVersion}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
+                                    {vuln.title}
+                                  </div>
+                                  <div style={{ fontSize: '0.8rem', color: '#475569', marginBottom: 8, lineHeight: 1.45 }}>
+                                    {vuln.description ? (vuln.description.length > 250 ? vuln.description.slice(0, 250) + '…' : vuln.description) : 'No advisory description provided.'}
+                                  </div>
+
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontSize: '0.78rem', color: '#64748b' }}>
+                                    <div>
+                                      Remediation: <strong style={{ color: '#0f172a' }}>{vuln.remediation || 'Apply latest vendor security patch.'}</strong>
+                                    </div>
+                                    {vuln.sources && vuln.sources.length > 0 && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span>Sources:</span>
+                                        {vuln.sources.map((s, sIdx) => s.sourceUrl ? (
+                                          <a
+                                            key={sIdx}
+                                            href={s.sourceUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                              color: '#2563eb', textDecoration: 'none', fontWeight: 600,
+                                              display: 'inline-flex', alignItems: 'center', gap: 3,
+                                            }}
+                                          >
+                                            {s.sourceName || 'Notice'} <ExternalLink size={10} />
+                                          </a>
+                                        ) : (
+                                          <span key={sIdx}>{s.sourceName}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Needs Review Advisories */}
+                        {product.needsReview && product.needsReview.length > 0 && (
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#d97706', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Needs Review ({product.needsReview.length}) — Not counted as confirmed
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {product.needsReview.map((vuln) => (
+                                <div
+                                  key={vuln.key}
+                                  style={{
+                                    border: '1px solid #fde68a',
+                                    borderRadius: 8,
+                                    padding: '10px 14px',
+                                    background: '#fffbeb',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.8rem', color: '#92400e' }}>
+                                        {vuln.cveId || vuln.key}
+                                      </span>
+                                      <span style={{ fontSize: '0.8rem', color: '#78350f', fontWeight: 600 }}>{vuln.title}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenAiModal(vuln)}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          background: '#fef3c7',
+                                          border: '1px solid #fde68a',
+                                          color: '#92400e',
+                                          borderRadius: 6,
+                                          padding: '2px 8px',
+                                          fontSize: '0.75rem',
+                                          fontWeight: 700,
+                                          cursor: 'pointer',
+                                        }}
+                                        title="Analyze this advisory with Google Gemini AI in popup modal"
+                                      >
+                                        <Sparkles size={11} color="#92400e" />
+                                        <span>AI Analysis</span>
+                                      </button>
+                                      <Link to={`/alerts?search=${encodeURIComponent(vuln.cveId || vuln.key)}`} style={{ fontSize: '0.75rem', color: '#b45309', fontWeight: 700 }}>
+                                        Review Alert →
+                                      </Link>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Safe product state */}
+                        {isSafe && (!product.vulnerabilities || product.vulnerabilities.length === 0) && (!product.needsReview || product.needsReview.length === 0) && (
+                          <div style={{ padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: '0.85rem' }}>
+                            ✓ All verified vendor advisory feeds checked. No matching vulnerabilities detected for {product.productName} v{product.installedVersion}.
+                          </div>
+                        )}
+
+                        {/* Coverage unavailable state */}
+                        {isUnsupported && (
+                          <div style={{ padding: '12px 16px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, color: '#64748b', fontSize: '0.85rem' }}>
+                            Official security advisory feed or database not yet configured for {product.ecosystem || product.productName}.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-
-            {stackItems.length > coverageItems.length && (
-              <div style={{ textAlign: 'right', marginTop: 12 }}>
-                <Link to="/stack" style={{ fontSize: '0.8rem', color: '#0f172a', fontWeight: 600, textDecoration: 'none' }}>
-                  + View all {stackItems.length} software products →
-                </Link>
-              </div>
-            )}
-          </CollapsibleSection>
-        )}
+          )}
+        </div>
 
         {/* ── Account Overview (collapsible) ─────── */}
         <CollapsibleSection
@@ -552,6 +930,18 @@ export default function DashboardPage() {
         </div>
 
       </div>
+
+      {/* Gemini AI Full Explanation Modal Popup */}
+      <AiExplanationModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        match={modalMatch}
+        data={modalMatch ? aiData[modalMatch.id] : null}
+        loading={modalMatch ? Boolean(aiLoading[modalMatch.id]) : false}
+        error={modalMatch ? aiError[modalMatch.id] : ''}
+        onExplain={(refresh) => modalMatch && handleExplainWithAi(modalMatch.id, refresh)}
+        onRefresh={(refresh) => modalMatch && handleExplainWithAi(modalMatch.id, refresh)}
+      />
     </div>
   );
 }

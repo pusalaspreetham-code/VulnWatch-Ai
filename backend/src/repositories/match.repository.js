@@ -4,7 +4,7 @@ class MatchRepository {
   /**
    * Upsert a match record.
    * If (stack_item_id, affected_product_id) already exists, update status & match_reason,
-   * while preserving human analyst overrides ('confirmed', 'dismissed').
+   * while preserving human analyst overrides ('confirmed', 'dismissed', 'not_affected').
    */
   async upsertMatch({ userId, stackItemId, affectedProductId, status = 'potential_match', matchReason }) {
     const query = `
@@ -13,7 +13,7 @@ class MatchRepository {
       ON CONFLICT (stack_item_id, affected_product_id) DO UPDATE SET
         status = CASE 
           WHEN EXCLUDED.status = 'not_affected' THEN 'not_affected'
-          WHEN matches.status IN ('confirmed', 'dismissed') THEN matches.status
+          WHEN matches.status IN ('confirmed', 'dismissed', 'not_affected') THEN matches.status
           ELSE EXCLUDED.status
         END,
         match_reason    = EXCLUDED.match_reason,
@@ -180,6 +180,7 @@ class MatchRepository {
 
   /**
    * Update the status of a match (must belong to the user).
+   * Synchronizes status across all match records under the same stack item sharing the CVE/advisory.
    * Also appends to review_history for auditability.
    */
   async updateMatchStatus(id, userId, newStatus, notes = null) {
@@ -188,18 +189,49 @@ class MatchRepository {
       throw new Error(`Invalid status: ${newStatus}`);
     }
 
-    // 1. Update match status
-    const updateResult = await pool.query(
-      `UPDATE matches
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2 AND user_id = $3
-       RETURNING id, status;`,
-      [newStatus, id, userId]
+    // 1. Fetch match to identify stack_item_id and CVE or advisory id
+    const matchLookup = await pool.query(
+      `SELECT m.id, m.stack_item_id, a.cve_id, a.id as advisory_id
+       FROM matches m
+       JOIN affected_products ap ON ap.id = m.affected_product_id
+       JOIN advisories a ON a.id = ap.advisory_id
+       WHERE m.id = $1 AND m.user_id = $2`,
+      [id, userId]
     );
 
-    if (updateResult.rowCount === 0) return null;
+    if (matchLookup.rows.length === 0) return null;
+    const { stack_item_id, cve_id, advisory_id } = matchLookup.rows[0];
 
-    // 2. Append to review_history (audit trail)
+    // 2. Update the target match and any sister matches under the same stack item sharing this CVE/advisory
+    let updateResult;
+    if (cve_id && cve_id.trim()) {
+      updateResult = await pool.query(
+        `UPDATE matches m
+         SET status = $1, updated_at = NOW()
+         FROM affected_products ap, advisories a
+         WHERE m.affected_product_id = ap.id
+           AND a.id = ap.advisory_id
+           AND m.user_id = $2
+           AND m.stack_item_id = $3
+           AND a.cve_id = $4
+         RETURNING m.id, m.status;`,
+        [newStatus, userId, stack_item_id, cve_id.trim()]
+      );
+    } else {
+      updateResult = await pool.query(
+        `UPDATE matches m
+         SET status = $1, updated_at = NOW()
+         FROM affected_products ap
+         WHERE m.affected_product_id = ap.id
+           AND ap.advisory_id = $4
+           AND m.user_id = $2
+           AND m.stack_item_id = $3
+         RETURNING m.id, m.status;`,
+        [newStatus, userId, stack_item_id, advisory_id]
+      );
+    }
+
+    // 3. Append to review_history for audit trail
     const reviewStatus = ['confirmed', 'not_affected', 'dismissed'].includes(newStatus)
       ? newStatus
       : 'reviewed';
@@ -210,7 +242,7 @@ class MatchRepository {
       [userId, id, reviewStatus, notes]
     );
 
-    return updateResult.rows[0];
+    return updateResult.rows.find((r) => String(r.id) === String(id)) || updateResult.rows[0];
   }
 
   /**

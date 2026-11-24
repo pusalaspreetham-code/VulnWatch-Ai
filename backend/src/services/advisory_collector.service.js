@@ -1,6 +1,7 @@
 const firecrawlService = require('./firecrawl.service');
 const advisoryParser = require('./advisory.parser');
 const advisoryRepository = require('../repositories/advisory.repository');
+const matcherService = require('./matcher.service');
 
 // Official Vendor Security Sources Only
 const OFFICIAL_SOURCES = [
@@ -125,6 +126,13 @@ class AdvisoryCollectorService {
         });
       }
     }
+
+    // After all sources are collected, re-scan every user's stack in the background
+    console.log('[COLLECTOR] Collection finished — triggering background re-scan for all users...');
+    matcherService.runForAllUsers().catch(err => {
+      console.warn('[COLLECTOR] Background re-scan failed:', err.message);
+    });
+
     return results;
   }
 }

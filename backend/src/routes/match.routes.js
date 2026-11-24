@@ -10,7 +10,8 @@ router.use(authMiddleware);
 // Summary for dashboard
 router.get('/summary', (req, res, next) => matchController.getMatchSummary(req, res, next));
 
-// Coverage report for monitored stack
+// Product-level scan targets and coverage report for monitored stack
+router.get('/products', (req, res, next) => matchController.getProductScanTargets(req, res, next));
 router.get('/coverage', (req, res, next) => matchController.getCoverageReport(req, res, next));
 
 // Trigger matching for the logged-in user

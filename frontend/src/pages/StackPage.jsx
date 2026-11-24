@@ -362,8 +362,20 @@ export default function StackPage() {
                           {item.category}
                         </span>
                       )}
+                      {item.ecosystem && item.ecosystem !== 'General Software' && (
+                        <span className="category-pill" style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                          {item.ecosystem}
+                        </span>
+                      )}
                     </div>
-                    <h3 className="item-product-name">{item.product_name}</h3>
+                    <h3 className="item-product-name">
+                      {item.canonical_name || item.product_name}
+                      {item.canonical_name && item.product_name && item.canonical_name.toLowerCase() !== item.product_name.toLowerCase() && (
+                        <span style={{ fontSize: '0.8rem', fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
+                          (Input: {item.product_name})
+                        </span>
+                      )}
+                    </h3>
                   </div>
 
                   <div className="item-action-buttons">
@@ -546,7 +558,14 @@ export default function StackPage() {
                                     {product.vendor}
                                   </div>
                                 </div>
-                                <span className="category-pill-sm">{product.category}</span>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                  {product.ecosystem && product.ecosystem !== 'General Software' && (
+                                    <span style={{ fontSize: '0.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>
+                                      {product.ecosystem}
+                                    </span>
+                                  )}
+                                  <span className="category-pill-sm">{product.category}</span>
+                                </div>
                               </div>
                             ))
                           )}

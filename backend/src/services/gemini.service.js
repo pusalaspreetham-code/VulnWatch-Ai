@@ -81,7 +81,7 @@ class GeminiService {
           ],
           generationConfig: {
             temperature: 0.2, // Low temperature for factual grounding
-            maxOutputTokens: 800,
+            maxOutputTokens: 2048,
           },
         }),
         signal: controller.signal,
@@ -119,10 +119,18 @@ class GeminiService {
         };
       }
 
+      // Strip common AI preamble lines that duplicate section headers
+      let cleanedText = text.trim();
+      cleanedText = cleanedText
+        .replace(/^Here is an? explanation of[^\n]*\n+/i, '')
+        .replace(/^Here is a? (?:security )?(?:analysis|summary|breakdown)[^\n]*\n+/i, '')
+        .replace(/^The following (?:is|provides)[^\n]*\n+/i, '')
+        .trim();
+
       return {
         success: true,
         configured: true,
-        explanation: text.trim(),
+        explanation: cleanedText,
         model,
         generatedAt: new Date().toISOString(),
         sourceUrl: match.source_url,

@@ -3,6 +3,7 @@ import { useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { matchesApi } from '../api/matches';
 import Navbar from '../components/Navbar';
+import AiExplanationModal from '../components/AiExplanationModal';
 import {
   Bell,
   Shield,
@@ -185,7 +186,7 @@ function cleanAdvisoryDescription(text) {
   return cleaned || null;
 }
 
-function AiExplanationView({ data, loading, error, onExplain, onRefresh, match }) {
+function AiExplanationView({ data, loading, error, onExplain, onRefresh, match, onOpenPopup }) {
   if (loading) {
     return (
       <div style={{
@@ -280,7 +281,10 @@ function AiExplanationView({ data, loading, error, onExplain, onRefresh, match }
           </div>
         </div>
         <button
-          onClick={() => onExplain(false)}
+          onClick={() => {
+            onExplain(false);
+            if (onOpenPopup) onOpenPopup(match);
+          }}
           className="btn-primary"
           style={{
             display: 'inline-flex',
@@ -343,23 +347,44 @@ function AiExplanationView({ data, loading, error, onExplain, onRefresh, match }
             </span>
           )}
         </div>
-        <button
-          onClick={() => onRefresh(true)}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#7c3aed',
-            fontSize: '0.78rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-        >
-          <RefreshCw size={12} />
-          <span>Re-analyze</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => onOpenPopup && onOpenPopup(match)}
+            style={{
+              background: '#ffffff',
+              border: '1px solid #d8b4fe',
+              color: '#6b21a8',
+              borderRadius: 6,
+              padding: '4px 10px',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <ExternalLink size={12} />
+            <span>Open in Popup</span>
+          </button>
+          <button
+            onClick={() => onRefresh(true)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#7c3aed',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <RefreshCw size={12} />
+            <span>Re-analyze</span>
+          </button>
+        </div>
       </div>
 
       {/* Content — rendered markdown only, no raw text */}
@@ -418,6 +443,8 @@ export default function AlertsPage() {
   // Query params
   const searchParams = new URLSearchParams(location.search);
   const initialSeverity = searchParams.get('severity') || '';
+  const initialStatus   = searchParams.get('status') || '';
+  const initialSearch   = searchParams.get('search') || '';
 
   const [matches, setMatches]           = useState([]);
   const [total, setTotal]               = useState(0);
@@ -428,9 +455,9 @@ export default function AlertsPage() {
   const [runError, setRunError]         = useState('');
 
   // Filters
-  const [statusFilter, setStatusFilter]     = useState('');
+  const [statusFilter, setStatusFilter]     = useState(initialStatus);
   const [severityFilter, setSeverityFilter] = useState(initialSeverity);
-  const [searchTerm, setSearchTerm]         = useState('');
+  const [searchTerm, setSearchTerm]         = useState(initialSearch);
 
   const [expandedId, setExpandedId]         = useState(null);
   const [updatingId, setUpdatingId]         = useState(null);
@@ -439,6 +466,49 @@ export default function AlertsPage() {
   const [aiLoading, setAiLoading]           = useState({});
   const [aiData, setAiData]                 = useState({});
   const [aiError, setAiError]               = useState({});
+
+  // Popup Modal & Action Feedback State
+  const [modalMatch, setModalMatch]         = useState(null);
+  const [isModalOpen, setIsModalOpen]       = useState(false);
+  const [actionFeedback, setActionFeedback] = useState('');
+
+  const handleOpenAiModal = (match) => {
+    setModalMatch(match);
+    setIsModalOpen(true);
+    if (!aiData[match.id] && !aiLoading[match.id]) {
+      handleExplainWithAi(match.id, false);
+    }
+  };
+
+  const handleStatusUpdate = async (matchId, newStatus) => {
+    setUpdatingId(matchId);
+    const targetMatch = matches.find((m) => String(m.id) === String(matchId));
+    try {
+      await matchesApi.updateMatchStatus(matchId, newStatus, null);
+      setMatches((prev) =>
+        prev.map((m) => {
+          if (
+            String(m.id) === String(matchId) ||
+            (targetMatch?.cve_id && m.cve_id === targetMatch.cve_id && m.stack_item_id === targetMatch.stack_item_id)
+          ) {
+            return { ...m, status: newStatus };
+          }
+          return m;
+        })
+      );
+      const label = STATUS_LABELS[newStatus]?.label || newStatus;
+      setActionFeedback(`Alert successfully updated to "${label}".`);
+      setTimeout(() => setActionFeedback(''), 4500);
+      // Reload coverage in background
+      matchesApi.getCoverageReport().then(setCoverageData).catch(() => {});
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      setActionFeedback(err.message || 'Failed to update alert status.');
+      setTimeout(() => setActionFeedback(''), 4500);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   const fetchMatches = async (status = statusFilter, severity = severityFilter, search = searchTerm) => {
     setLoading(true);
@@ -498,8 +568,15 @@ export default function AlertsPage() {
   };
 
   useEffect(() => {
-    fetchMatches(statusFilter, severityFilter, searchTerm);
-  }, [severityFilter]);
+    const sp = new URLSearchParams(location.search);
+    const sev = sp.get('severity') || '';
+    const st  = sp.get('status') || '';
+    const sr  = sp.get('search') || '';
+    setStatusFilter(st);
+    setSeverityFilter(sev);
+    setSearchTerm(sr);
+    fetchMatches(st, sev, sr);
+  }, [location.search]);
 
   const handleRunMatching = async () => {
     setRunningMatch(true);
@@ -534,31 +611,24 @@ export default function AlertsPage() {
     fetchMatches('', '', '');
   };
 
-  const handleStatusUpdate = async (matchId, newStatus) => {
-    setUpdatingId(matchId);
-    try {
-      await matchesApi.updateMatchStatus(matchId, newStatus, null);
-      setMatches((prev) =>
-        prev.map((m) => (m.id === matchId ? { ...m, status: newStatus } : m))
-      );
-      // Reload coverage in background
-      matchesApi.getCoverageReport().then(setCoverageData).catch(() => {});
-    } catch (err) {
-      console.error('Failed to update status:', err);
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   const vulnerableCount = matches.filter((m) => m.status === 'vulnerable' || m.status === 'confirmed').length;
   const needsReviewCount = matches.filter((m) => m.status === 'potential_match' || m.status === 'needs_review').length;
   const safeCount = matches.filter((m) => m.status === 'not_affected').length;
 
+  // Canonical metrics aligned with Dashboard summary
+  const covSummary = coverageData?.summary;
+  const verifiedCritical = covSummary ? (covSummary.critical ?? 0) : matches.filter((m) => (m.status === 'vulnerable' || m.status === 'confirmed') && m.severity === 'Critical').length;
+  const verifiedHigh = covSummary ? (covSummary.high ?? 0) : matches.filter((m) => (m.status === 'vulnerable' || m.status === 'confirmed') && m.severity === 'High').length;
+  const verifiedMedium = covSummary ? (covSummary.medium ?? 0) : matches.filter((m) => (m.status === 'vulnerable' || m.status === 'confirmed') && m.severity === 'Medium').length;
+  const displayVulnerable = covSummary ? (covSummary.vulnerableCount ?? 0) : vulnerableCount;
+  const displayNeedsReview = covSummary ? (covSummary.needsReviewCount ?? 0) : needsReviewCount;
+  const displaySafe = covSummary ? (covSummary.safeCount ?? 0) : safeCount;
+
   return (
     <div>
-      <Navbar alertCount={vulnerableCount} />
+      <Navbar alertCount={displayVulnerable} />
 
       <div className="dashboard-container">
         {/* Header */}
@@ -569,7 +639,7 @@ export default function AlertsPage() {
                 <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.025em' }}>
                   Vulnerability Alerts & Advisory Intelligence
                 </h1>
-                {vulnerableCount > 0 ? (
+                {displayVulnerable > 0 ? (
                   <span style={{
                     background: '#fef2f2',
                     color: '#dc2626',
@@ -579,7 +649,7 @@ export default function AlertsPage() {
                     fontWeight: 700,
                     padding: '3px 12px',
                   }}>
-                    {vulnerableCount} Vulnerable
+                    {displayVulnerable} Vulnerable
                   </span>
                 ) : (
                   <span style={{
@@ -614,6 +684,23 @@ export default function AlertsPage() {
         </div>
 
         {/* Scan feedback banners */}
+        {actionFeedback && (
+          <div style={{
+            background: actionFeedback.toLowerCase().includes('failed') ? '#fef2f2' : '#f0fdf4',
+            border: `1px solid ${actionFeedback.toLowerCase().includes('failed') ? '#fecaca' : '#bbf7d0'}`,
+            borderRadius: 8,
+            padding: '12px 16px',
+            fontSize: '0.875rem',
+            color: actionFeedback.toLowerCase().includes('failed') ? '#dc2626' : '#166534',
+            marginBottom: 16,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+            <CheckCircle size={16} />
+            <span>{actionFeedback}</span>
+          </div>
+        )}
         {runMessage && (
           <div style={{
             background: runMessage.toLowerCase().includes('vulnerable') ? '#fef2f2' : '#f0fdf4',
@@ -677,111 +764,13 @@ export default function AlertsPage() {
             }}
           >
             <Layers size={16} />
-            <span>Stack Coverage & Health ({coverageData?.items?.length || 0})</span>
+            <span>Stack Coverage & Health ({coverageData?.products?.length || coverageData?.items?.length || 0})</span>
           </button>
         </div>
 
         {activeTab === 'alerts' ? (
           <div>
-            {/* Interactive Metrics / Severity Bar */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 18 }}>
-              <div
-                onClick={() => handleFilterChange('', '')}
-                style={{
-                  background: !severityFilter && !statusFilter ? '#0f172a' : '#f8fafc',
-                  color: !severityFilter && !statusFilter ? '#fff' : '#0f172a',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{total}</div>
-                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>All Alerts</div>
-              </div>
 
-              <div
-                onClick={() => handleFilterChange('vulnerable', '')}
-                style={{
-                  background: statusFilter === 'vulnerable' ? '#fef2f2' : '#f8fafc',
-                  border: `1px solid ${statusFilter === 'vulnerable' ? '#dc2626' : '#fecaca'}`,
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#dc2626' }}>{vulnerableCount}</div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Vulnerable</div>
-              </div>
-
-              <div
-                onClick={() => handleFilterChange('', 'Critical')}
-                style={{
-                  background: severityFilter === 'Critical' ? '#fef2f2' : '#f8fafc',
-                  border: `1px solid ${severityFilter === 'Critical' ? '#dc2626' : '#fecaca'}`,
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#dc2626' }}>
-                  {matches.filter((m) => m.severity === 'Critical').length}
-                </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Critical</div>
-              </div>
-
-              <div
-                onClick={() => handleFilterChange('', 'High')}
-                style={{
-                  background: severityFilter === 'High' ? '#fff7ed' : '#f8fafc',
-                  border: `1px solid ${severityFilter === 'High' ? '#ea580c' : '#fed7aa'}`,
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ea580c' }}>
-                  {matches.filter((m) => m.severity === 'High').length}
-                </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#ea580c', textTransform: 'uppercase', letterSpacing: '0.04em' }}>High</div>
-              </div>
-
-              <div
-                onClick={() => handleFilterChange('', 'Medium')}
-                style={{
-                  background: severityFilter === 'Medium' ? '#fffbeb' : '#f8fafc',
-                  border: `1px solid ${severityFilter === 'Medium' ? '#d97706' : '#fde68a'}`,
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#d97706' }}>
-                  {matches.filter((m) => m.severity === 'Medium').length}
-                </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Medium</div>
-              </div>
-
-              <div
-                onClick={() => handleFilterChange('not_affected', '')}
-                style={{
-                  background: statusFilter === 'not_affected' ? '#f0fdf4' : '#f8fafc',
-                  border: `1px solid ${statusFilter === 'not_affected' ? '#16a34a' : '#bbf7d0'}`,
-                  borderRadius: 8,
-                  padding: '10px 14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#16a34a' }}>{safeCount}</div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Not Affected</div>
-              </div>
-            </div>
 
             {/* Filter & Search Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
@@ -857,6 +846,33 @@ export default function AlertsPage() {
                   <option value="Medium">Medium</option>
                   <option value="Low">Low</option>
                 </select>
+
+                {/* Product Filter */}
+                {coverageData?.products && coverageData.products.length > 0 && (
+                  <select
+                    value={searchTerm}
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      fetchMatches(statusFilter, severityFilter, e.target.value);
+                    }}
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 8,
+                      padding: '8px 12px',
+                      fontSize: '0.85rem',
+                      background: '#fff',
+                      color: '#0f172a',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="">All Monitored Products</option>
+                    {coverageData.products.map((p) => (
+                      <option key={p.id} value={p.productName}>
+                        {p.productName} (v{p.installedVersion})
+                      </option>
+                    ))}
+                  </select>
+                )}
 
                 {(statusFilter || severityFilter || searchTerm) && (
                   <button
@@ -1066,57 +1082,147 @@ export default function AlertsPage() {
                             error={aiError[match.id]}
                             onExplain={(refresh) => handleExplainWithAi(match.id, refresh)}
                             onRefresh={(refresh) => handleExplainWithAi(match.id, refresh)}
+                            onOpenPopup={(m) => handleOpenAiModal(m)}
                           />
 
                           {/* Actions Bar */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
                             <span style={{ fontSize: '0.78rem', color: '#94a3b8', marginRight: 4 }}>Analyst Action:</span>
 
-                            {match.status !== 'confirmed' && (
-                              <button
-                                onClick={() => handleStatusUpdate(match.id, 'confirmed')}
-                                disabled={isUpdating}
-                                style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', borderRadius: 8, padding: '6px 12px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}
-                              >
-                                <AlertTriangle size={12} /> Confirm Vulnerable
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleStatusUpdate(match.id, 'confirmed');
+                              }}
+                              disabled={isUpdating}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                background: match.status === 'confirmed' ? '#fecaca' : '#fef2f2',
+                                border: match.status === 'confirmed' ? '2px solid #dc2626' : '1px solid #fecaca',
+                                color: '#dc2626',
+                                borderRadius: 8,
+                                padding: '6px 12px',
+                                fontSize: '0.78rem',
+                                fontWeight: 700,
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.6 : 1,
+                              }}
+                              title="Confirm that this stack item is vulnerable according to official advisory specifications"
+                            >
+                              {isUpdating && updatingId === match.id ? (
+                                <RefreshCw size={12} className="animate-spin-fast" />
+                              ) : (
+                                <AlertTriangle size={12} />
+                              )}
+                              <span>Confirm Vulnerable</span>
+                            </button>
 
-                            {match.status !== 'not_affected' && (
-                              <button
-                                onClick={() => handleStatusUpdate(match.id, 'not_affected')}
-                                disabled={isUpdating}
-                                style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#16a34a', borderRadius: 8, padding: '6px 12px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}
-                              >
-                                <Check size={12} strokeWidth={2.5} /> Mark Not Affected
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleStatusUpdate(match.id, 'not_affected');
+                              }}
+                              disabled={isUpdating}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                background: match.status === 'not_affected' ? '#bbf7d0' : '#f0fdf4',
+                                border: match.status === 'not_affected' ? '2px solid #16a34a' : '1px solid #bbf7d0',
+                                color: '#16a34a',
+                                borderRadius: 8,
+                                padding: '6px 12px',
+                                fontSize: '0.78rem',
+                                fontWeight: 700,
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.6 : 1,
+                              }}
+                              title="Mark this vulnerability as not affected on your monitored environment"
+                            >
+                              {isUpdating && updatingId === match.id ? (
+                                <RefreshCw size={12} className="animate-spin-fast" />
+                              ) : (
+                                <Check size={12} strokeWidth={2.5} />
+                              )}
+                              <span>Mark Not Affected</span>
+                            </button>
 
-                            {match.status !== 'dismissed' && (
-                              <button
-                                onClick={() => handleStatusUpdate(match.id, 'dismissed')}
-                                disabled={isUpdating}
-                                style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: 8, padding: '6px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
-                              >
-                                <EyeOff size={12} /> Dismiss
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleStatusUpdate(match.id, 'dismissed');
+                              }}
+                              disabled={isUpdating}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                background: match.status === 'dismissed' ? '#cbd5e1' : '#f1f5f9',
+                                border: match.status === 'dismissed' ? '2px solid #475569' : '1px solid #e2e8f0',
+                                color: '#475569',
+                                borderRadius: 8,
+                                padding: '6px 12px',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.6 : 1,
+                              }}
+                              title="Dismiss this advisory from active view"
+                            >
+                              {isUpdating && updatingId === match.id ? (
+                                <RefreshCw size={12} className="animate-spin-fast" />
+                              ) : (
+                                <EyeOff size={12} />
+                              )}
+                              <span>Dismiss</span>
+                            </button>
 
-                            {match.status !== 'potential_match' && (
-                              <button
-                                onClick={() => handleStatusUpdate(match.id, 'potential_match')}
-                                disabled={isUpdating}
-                                style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#fffbeb', border: '1px solid #fde68a', color: '#d97706', borderRadius: 8, padding: '6px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
-                              >
-                                <RefreshCw size={12} /> Reset to Review
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleStatusUpdate(match.id, 'potential_match');
+                              }}
+                              disabled={isUpdating}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                background: match.status === 'potential_match' || match.status === 'needs_review' ? '#fde68a' : '#fffbeb',
+                                border: match.status === 'potential_match' || match.status === 'needs_review' ? '2px solid #d97706' : '1px solid #fde68a',
+                                color: '#d97706',
+                                borderRadius: 8,
+                                padding: '6px 12px',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.6 : 1,
+                              }}
+                              title="Reset status back to Needs Review for manual evaluation"
+                            >
+                              {isUpdating && updatingId === match.id ? (
+                                <RefreshCw size={12} className="animate-spin-fast" />
+                              ) : (
+                                <RefreshCw size={12} />
+                              )}
+                              <span>Reset to Review</span>
+                            </button>
 
                             {match.source_url && (
                               <a
                                 href={match.source_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, color: '#0f172a', fontSize: '0.8rem', textDecoration: 'none', fontWeight: 600 }}
                               >
                                 <span>Official Source Notice</span>
@@ -1161,7 +1267,7 @@ export default function AlertsPage() {
                     <div className="stat-tile-value" style={{ color: '#dc2626' }}>{coverageData.summary.vulnerableCount}</div>
                   </div>
                   <div className="stat-tile" style={{ borderLeft: '3px solid #94a3b8' }}>
-                    <div className="stat-tile-label">Pending Feeds</div>
+                    <div className="stat-tile-label">Coverage Unavailable</div>
                     <div className="stat-tile-value" style={{ color: '#64748b' }}>{coverageData.summary.unsupportedCount}</div>
                   </div>
                 </div>
@@ -1169,11 +1275,11 @@ export default function AlertsPage() {
 
               {/* Items Table */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {(coverageData?.items || []).map((item) => {
+                {(coverageData?.products || coverageData?.items || []).map((item) => {
                   const isVulnerable = item.healthStatus === 'vulnerable';
                   const isNeedsReview = item.healthStatus === 'needs_review';
                   const isSafe = item.healthStatus === 'safe';
-                  const isUnsupported = item.healthStatus === 'unsupported';
+                  const isUnsupported = item.healthStatus === 'unsupported' || item.healthStatus === 'coverage_unavailable' || !item.isSupported;
 
                   return (
                     <div
@@ -1182,7 +1288,7 @@ export default function AlertsPage() {
                         padding: '16px 20px',
                         background: '#ffffff',
                         border: `1px solid ${isVulnerable ? '#fecaca' : '#e2e8f0'}`,
-                        borderLeft: isVulnerable ? '4px solid #ef4444' : isSafe ? '4px solid #10b981' : isNeedsReview ? '4px solid #f59e0b' : '4px solid #cbd5e1',
+                        borderLeft: isVulnerable ? '4px solid #ef4444' : isSafe ? '4px solid #10b981' : isNeedsReview ? '4px solid #f59e0b' : '4px solid #94a3b8',
                         borderRadius: 10,
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -1200,9 +1306,17 @@ export default function AlertsPage() {
                           <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#64748b', borderRadius: 6, padding: '2px 8px' }}>
                             {item.category}
                           </span>
+                          {item.ecosystem && item.ecosystem !== 'General Software' && (
+                            <span style={{ fontSize: '0.7rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
+                              {item.ecosystem}
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
                           Vendor: <strong>{item.vendor || 'Generic'}</strong>
+                          {item.originalInput && item.originalInput !== item.productName && (
+                            <span style={{ marginLeft: 8, color: '#475569' }}>(Input: {item.originalInput})</span>
+                          )}
                           {item.notes && <span> · Note: {item.notes}</span>}
                         </div>
                       </div>
@@ -1235,7 +1349,11 @@ export default function AlertsPage() {
                             fontSize: '0.78rem',
                             fontWeight: 600,
                             padding: '4px 14px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
                           }}>
+                            <AlertCircle size={14} />
                             Needs Review ({item.totalAdvisories})
                           </span>
                         )}
@@ -1254,7 +1372,7 @@ export default function AlertsPage() {
                             gap: 6,
                           }}>
                             <Check size={14} strokeWidth={2.5} />
-                            {item.statusLabel}
+                            {item.statusLabel || 'Verified Safe'}
                           </span>
                         )}
 
@@ -1271,9 +1389,10 @@ export default function AlertsPage() {
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: 6,
-                            }}>
+                            }}
+                            title="No advisory source or database configured for this product">
                               <HelpCircle size={13} color="#94a3b8" />
-                              No Feed Configured
+                              Coverage Unavailable
                             </span>
                           </div>
                         )}
@@ -1286,6 +1405,18 @@ export default function AlertsPage() {
           </div>
         )}
       </div>
+
+      {/* Gemini AI Full Explanation Modal Popup */}
+      <AiExplanationModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        match={modalMatch}
+        data={modalMatch ? aiData[modalMatch.id] : null}
+        loading={modalMatch ? Boolean(aiLoading[modalMatch.id]) : false}
+        error={modalMatch ? aiError[modalMatch.id] : ''}
+        onExplain={(refresh) => modalMatch && handleExplainWithAi(modalMatch.id, refresh)}
+        onRefresh={(refresh) => modalMatch && handleExplainWithAi(modalMatch.id, refresh)}
+      />
     </div>
   );
 }
