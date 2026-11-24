@@ -167,11 +167,13 @@ CREATE TABLE IF NOT EXISTS matches (
 
     status VARCHAR(30) NOT NULL DEFAULT 'needs_review',
     match_reason TEXT,
+    ai_explanation TEXT,
+    ai_explained_at TIMESTAMPTZ,
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CHECK (status IN ('potential_match', 'no_match', 'needs_review')),
+    CHECK (status IN ('vulnerable', 'potential_match', 'needs_review', 'not_affected', 'dismissed', 'confirmed', 'no_match')),
 
     -- Ensure the stack item belongs to this user.
     FOREIGN KEY (stack_item_id, user_id)

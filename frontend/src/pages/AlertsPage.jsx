@@ -20,6 +20,8 @@ import {
   HelpCircle,
   AlertCircle,
   X,
+  Sparkles,
+  Bot,
 } from 'lucide-react';
 
 const SEVERITY_STYLES = {
@@ -78,6 +80,334 @@ function StatusBadge({ status }) {
   );
 }
 
+// Simple markdown renderer for Gemini AI output
+function renderMarkdown(text) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  const elements = [];
+  let key = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Skip empty line
+    if (!line.trim()) {
+      elements.push(<div key={key++} style={{ height: 8 }} />);
+      continue;
+    }
+
+    // H3
+    if (line.startsWith('### ')) {
+      elements.push(
+        <div key={key++} style={{ fontWeight: 800, fontSize: '0.9rem', color: '#3b0764', marginTop: 10, marginBottom: 4, letterSpacing: '-0.01em' }}>
+          {renderInline(line.slice(4))}
+        </div>
+      );
+      continue;
+    }
+
+    // H2
+    if (line.startsWith('## ')) {
+      elements.push(
+        <div key={key++} style={{ fontWeight: 800, fontSize: '0.95rem', color: '#3b0764', marginTop: 12, marginBottom: 6 }}>
+          {renderInline(line.slice(3))}
+        </div>
+      );
+      continue;
+    }
+
+    // Bullet
+    if (line.startsWith('- ') || line.startsWith('* ')) {
+      elements.push(
+        <div key={key++} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.86rem', color: '#4c1d95', lineHeight: 1.6, paddingLeft: 4 }}>
+          <span style={{ marginTop: 6, width: 5, height: 5, borderRadius: '50%', background: '#7c3aed', flexShrink: 0 }} />
+          <span>{renderInline(line.slice(2))}</span>
+        </div>
+      );
+      continue;
+    }
+
+    // Numbered list
+    const numMatch = line.match(/^(\d+)\.\s(.+)/);
+    if (numMatch) {
+      elements.push(
+        <div key={key++} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.86rem', color: '#4c1d95', lineHeight: 1.6, paddingLeft: 4 }}>
+          <span style={{ fontWeight: 700, color: '#7c3aed', flexShrink: 0, minWidth: 20 }}>{numMatch[1]}.</span>
+          <span>{renderInline(numMatch[2])}</span>
+        </div>
+      );
+      continue;
+    }
+
+    // Regular paragraph
+    elements.push(
+      <div key={key++} style={{ fontSize: '0.86rem', color: '#4c1d95', lineHeight: 1.65 }}>
+        {renderInline(line)}
+      </div>
+    );
+  }
+
+  return elements;
+}
+
+function renderInline(text) {
+  // Bold **text** and *text*
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} style={{ fontWeight: 700, color: '#3b0764' }}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={i}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={i} style={{ background: '#ede9fe', color: '#6d28d9', padding: '1px 5px', borderRadius: 4, fontSize: '0.82em', fontFamily: 'monospace' }}>{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
+
+// Clean raw scraped advisory description
+function cleanAdvisoryDescription(text) {
+  if (!text) return null;
+  // Remove known scraped garbage patterns
+  let cleaned = text
+    .replace(/Advertising Advertising cookies[\s\S]{0,500}?CancelSave preferences/gi, '')
+    .replace(/Below are bulletins for security[\s\S]{0,200}?RSS feed\)?/gi, '')
+    .replace(/\(https?:\/\/[^)]+\)/g, '') // remove inline markdown links content
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // convert [text](url) → text
+    .replace(/\|\s*Date Released[\s\S]*?---\s*/g, '') // remove table headers
+    .replace(/\|[\s\S]+?\|\s*\n/g, '') // remove table rows
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  // Truncate at 500 chars to show only the useful part
+  if (cleaned.length > 500) cleaned = cleaned.slice(0, 500) + '…';
+  return cleaned || null;
+}
+
+function AiExplanationView({ data, loading, error, onExplain, onRefresh, match }) {
+  if (loading) {
+    return (
+      <div style={{
+        background: '#f8fafc',
+        border: '1px solid #e2e8f0',
+        borderRadius: 8,
+        padding: '16px 20px',
+        marginBottom: 16,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        color: '#475569',
+        fontSize: '0.875rem'
+      }}>
+        <RefreshCw size={18} className="animate-spin-fast" color="#6366f1" />
+        <span>Consulting Google Gemini AI (analyzing official advisory bulletin)...</span>
+      </div>
+    );
+  }
+
+  if (error || (data && !data.success)) {
+    const isUnconfigured = data?.configured === false;
+    return (
+      <div style={{
+        background: isUnconfigured ? '#eff6ff' : '#fef2f2',
+        border: `1px solid ${isUnconfigured ? '#bfdbfe' : '#fecaca'}`,
+        borderRadius: 8,
+        padding: '16px 20px',
+        marginBottom: 16,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          {isUnconfigured ? (
+            <Bot size={18} color="#2563eb" style={{ marginTop: 2, flexShrink: 0 }} />
+          ) : (
+            <AlertCircle size={18} color="#dc2626" style={{ marginTop: 2, flexShrink: 0 }} />
+          )}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.875rem', color: isUnconfigured ? '#1e40af' : '#991b1b', marginBottom: 4 }}>
+              {isUnconfigured ? 'Google Gemini AI Setup' : 'AI Advisory Explanation Unavailable'}
+            </div>
+            <div style={{ fontSize: '0.825rem', color: isUnconfigured ? '#1e3a8a' : '#7f1d1d', lineHeight: 1.5, marginBottom: 10 }}>
+              {isUnconfigured
+                ? 'To enable AI-powered advisory summaries and step-by-step remediation guidance, add your GEMINI_API_KEY to backend/.env. (Deterministic version detection remains 100% active and accurate without AI).'
+                : (error || data?.message || 'Failed to fetch AI explanation.')}
+            </div>
+            {!isUnconfigured && (
+              <button
+                onClick={() => onExplain(true)}
+                style={{
+                  background: '#fff',
+                  border: '1px solid #fca5a5',
+                  color: '#dc2626',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Retry Request
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data || !data.explanation) {
+    return (
+      <div style={{
+        background: '#f8fafc',
+        border: '1px dashed #cbd5e1',
+        borderRadius: 8,
+        padding: '12px 18px',
+        marginBottom: 16,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 12,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Sparkles size={18} color="#6366f1" />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#1e293b' }}>
+              Explain with AI
+            </div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+              Summarize this advisory and get cautious remediation steps grounded in vendor data.
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => onExplain(false)}
+          className="btn-primary"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            width: 'auto',
+            padding: '7px 14px',
+            fontSize: '0.825rem',
+            background: '#4f46e5',
+            borderColor: '#4f46e5',
+            cursor: 'pointer',
+          }}
+        >
+          <Sparkles size={14} />
+          <span>Explain with AI</span>
+        </button>
+      </div>
+    );
+  }
+
+  // Explanation is available
+  return (
+    <div style={{
+      background: '#faf5ff',
+      border: '1px solid #e9d5ff',
+      borderRadius: 8,
+      padding: '16px 20px',
+      marginBottom: 16,
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 12,
+        paddingBottom: 10,
+        borderBottom: '1px solid #f3e8ff',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Bot size={18} color="#7c3aed" />
+          <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#581c87' }}>
+            AI Advisory Analysis & Remediation
+          </span>
+          <span style={{
+            background: '#f3e8ff',
+            color: '#6b21a8',
+            border: '1px solid #d8b4fe',
+            borderRadius: 12,
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            padding: '2px 8px',
+          }}>
+            {data.model || 'Gemini 2.5 Flash'}
+          </span>
+          {data.cached && (
+            <span style={{ fontSize: '0.7rem', color: '#9333ea', fontWeight: 600 }}>
+              (Cached)
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => onRefresh(true)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#7c3aed',
+            fontSize: '0.78rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <RefreshCw size={12} />
+          <span>Re-analyze</span>
+        </button>
+      </div>
+
+      {/* Content — rendered markdown only, no raw text */}
+      <div style={{
+        fontSize: '0.875rem',
+        color: '#3b0764',
+        lineHeight: 1.6,
+        marginBottom: 14,
+        fontFamily: 'inherit',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}>
+        {renderMarkdown(data.explanation)}
+      </div>
+
+      {/* Footer / Ground Truth Disclaimer */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 8,
+        paddingTop: 10,
+        borderTop: '1px solid #f3e8ff',
+        fontSize: '0.75rem',
+        color: '#7e22ce',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Shield size={13} color="#9333ea" />
+          <span>Grounded strictly in verified advisory data · Deterministic matcher is single source of truth</span>
+        </div>
+        {match.source_url && (
+          <a
+            href={match.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#6b21a8', fontWeight: 600, textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >
+            <span>Original Vendor Advisory</span>
+            <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AlertsPage() {
   const { user } = useAuth();
   const location = useLocation();
@@ -105,6 +435,11 @@ export default function AlertsPage() {
   const [expandedId, setExpandedId]         = useState(null);
   const [updatingId, setUpdatingId]         = useState(null);
 
+  // Gemini AI Explanation State
+  const [aiLoading, setAiLoading]           = useState({});
+  const [aiData, setAiData]                 = useState({});
+  const [aiError, setAiError]               = useState({});
+
   const fetchMatches = async (status = statusFilter, severity = severityFilter, search = searchTerm) => {
     setLoading(true);
     try {
@@ -117,13 +452,48 @@ export default function AlertsPage() {
         matchesApi.getCoverageReport().catch(() => null),
       ]);
 
-      setMatches(matchesRes.matches || []);
+      const fetchedMatches = matchesRes.matches || [];
+      setMatches(fetchedMatches);
       setTotal(matchesRes.total || 0);
       setCoverageData(covRes);
+
+      // Prepopulate matches that already have a stored AI explanation
+      const initialAi = {};
+      fetchedMatches.forEach((m) => {
+        if (m.ai_explanation) {
+          initialAi[m.id] = {
+            success: true,
+            configured: true,
+            explanation: m.ai_explanation,
+            cached: true,
+            sourceUrl: m.source_url,
+            cveId: m.cve_id,
+          };
+        }
+      });
+      if (Object.keys(initialAi).length > 0) {
+        setAiData((prev) => ({ ...initialAi, ...prev }));
+      }
     } catch (err) {
       console.error('Failed to load matches:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExplainWithAi = async (matchId, refresh = false) => {
+    setAiLoading((prev) => ({ ...prev, [matchId]: true }));
+    setAiError((prev) => ({ ...prev, [matchId]: '' }));
+    try {
+      const res = await matchesApi.explainMatch(matchId, refresh);
+      setAiData((prev) => ({ ...prev, [matchId]: res }));
+      if (!res.success && res.message) {
+        setAiError((prev) => ({ ...prev, [matchId]: res.message }));
+      }
+    } catch (err) {
+      setAiError((prev) => ({ ...prev, [matchId]: err.message || 'Failed to generate AI explanation.' }));
+    } finally {
+      setAiLoading((prev) => ({ ...prev, [matchId]: false }));
     }
   };
 
@@ -640,11 +1010,11 @@ export default function AlertsPage() {
                             </div>
                           </div>
 
-                          {/* Advisory Description if available */}
-                          {match.advisory_description && (
-                            <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: 16, lineHeight: 1.5, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px' }}>
-                              <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>Advisory Details:</div>
-                              {match.advisory_description}
+                          {/* Advisory Description — cleaned scraped content */}
+                          {match.advisory_description && cleanAdvisoryDescription(match.advisory_description) && (
+                            <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: 16, lineHeight: 1.6, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px' }}>
+                              <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 6, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advisory Details:</div>
+                              {cleanAdvisoryDescription(match.advisory_description)}
                             </div>
                           )}
 
@@ -687,6 +1057,16 @@ export default function AlertsPage() {
                               <strong>Remediation Guidance:</strong> {match.remediation}
                             </div>
                           )}
+
+                          {/* AI Explanation & Guidance */}
+                          <AiExplanationView
+                            match={match}
+                            data={aiData[match.id]}
+                            loading={Boolean(aiLoading[match.id])}
+                            error={aiError[match.id]}
+                            onExplain={(refresh) => handleExplainWithAi(match.id, refresh)}
+                            onRefresh={(refresh) => handleExplainWithAi(match.id, refresh)}
+                          />
 
                           {/* Actions Bar */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>

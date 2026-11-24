@@ -12,6 +12,7 @@ Vulnerability advisory monitoring web application.
 - **Monitored Stack Management:** Full CRUD software inventory scoped to authenticated user
 - **Product Catalog:** Curated software catalog with categories and known versions
 - **Security Advisory Collection:** Automated scraping of official vendor security pages via Firecrawl, with deterministic parsing, deduplication, and audit logging
+- **AI Advisory Explanations:** Optional Google Gemini AI integration (backend-only) that explains verified vulnerability findings and suggests cautious remediation steps — grounded strictly in official advisory data
 
 ---
 
@@ -85,6 +86,39 @@ Vulnerability advisory monitoring web application.
 | `GET` | `/api/matches/coverage` | Authenticated | Stack coverage breakdown (supported feeds vs pending catalog items) |
 | `GET` | `/api/matches/:id` | Authenticated | Retrieve single match with affected products & advisory details |
 | `PATCH` | `/api/matches/:id/status` | Authenticated | Update status (`vulnerable`, `confirmed`, `not_affected`, `dismissed`) with audit trail |
+| `POST` | `/api/matches/:id/explain` | Authenticated | Generate or retrieve a cached Gemini AI explanation for a specific vulnerability match |
+
+---
+
+## Google Gemini AI Setup (Optional)
+
+The "Explain with AI" feature generates plain-language advisory summaries and step-by-step remediation guidance via the Gemini API, **called from the Node.js backend only** — the API key is never sent to or exposed in the React frontend.
+
+### Configuration
+
+Add these variables to `backend/.env`:
+
+```env
+GEMINI_API_KEY=your-api-key-here
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+- Get a free API key at [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- Leave `GEMINI_API_KEY` empty to disable AI — the app works fully without it
+
+### How It Works
+
+- Deterministic version matching is **always** the source of truth — AI never determines if a product is vulnerable
+- When you click **"Explain with AI"** on any alert card, the backend calls Gemini with the verified advisory data
+- The AI response is cached in the `matches.ai_explanation` column to avoid duplicate API calls
+- Click **"Re-analyze"** to force a fresh generation
+- If the key is missing or the API is unavailable, the UI shows a clear setup prompt — no crash, no silent failure
+
+### Guardrails
+
+- Gemini is instructed via system prompt to base its response strictly on the verified data provided
+- The UI always shows a disclaimer: **"Deterministic matcher is single source of truth"**
+- A direct link to the official vendor advisory is always displayed alongside the AI output
 
 ---
 

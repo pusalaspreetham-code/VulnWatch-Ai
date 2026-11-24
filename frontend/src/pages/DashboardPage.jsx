@@ -22,9 +22,55 @@ import {
   Bell,
   CheckCircle2,
   HelpCircle,
-  ExternalLink,
+  ChevronDown,
 } from 'lucide-react';
 import OtpInput from '../components/OtpInput';
+
+// ─── Collapsible Section ──────────────────────────────────────────────────────
+function CollapsibleSection({ icon, title, badge, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{
+      background: '#fff',
+      border: '1px solid #e2e8f0',
+      borderRadius: 14,
+      overflow: 'hidden',
+      boxShadow: '0 1px 4px rgba(15,23,42,0.05)',
+      transition: 'box-shadow 0.2s',
+    }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '18px 24px',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {icon}
+          <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0f172a' }}>{title}</span>
+          {badge}
+        </div>
+        <ChevronDown
+          size={18}
+          color="#94a3b8"
+          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s cubic-bezier(0.16,1,0.3,1)', flexShrink: 0 }}
+        />
+      </button>
+      {open && (
+        <div style={{ padding: '0 24px 24px', animation: 'slideDown 0.22s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -60,7 +106,6 @@ export default function DashboardPage() {
         matchesApi.getMatchSummary().catch(() => ({ summary: null })),
         matchesApi.getCoverageReport().catch(() => null),
       ]);
-
       setStackItems(stackRes.items || []);
       setAlertSummary(summaryRes.summary);
       setCoverageData(coverageRes);
@@ -84,7 +129,7 @@ export default function DashboardPage() {
       setMatchMessage(res.message);
       await loadData();
     } catch (err) {
-      setMatchMessage(err.message || 'Matching scan failed.');
+      setMatchMessage(err.message || 'Scan failed.');
     } finally {
       setRunningMatch(false);
     }
@@ -114,7 +159,6 @@ export default function DashboardPage() {
       setError('New passwords do not match.');
       return;
     }
-
     if (!otpCode || otpCode.length !== 6) {
       setError('Please provide the 6-digit verification code sent to your email.');
       return;
@@ -137,613 +181,376 @@ export default function DashboardPage() {
   };
 
   const formattedDate = user?.created_at
-    ? new Date(user.created_at).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      })
+    ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : 'Active';
 
   const vulnerableCount = alertSummary ? (alertSummary.vulnerable || 0) + (alertSummary.confirmed || 0) : 0;
-  const hasAlerts = alertSummary && (alertSummary.total > 0 || vulnerableCount > 0);
-  const criticalOrHigh = alertSummary ? alertSummary.critical + alertSummary.high : 0;
+  const isAllClear = !loadingAlerts && alertSummary && vulnerableCount === 0 && alertSummary.total >= 0;
+  const coverageItems = coverageData?.items || [];
+
+  const severityTiles = [
+    { label: 'Critical', count: alertSummary?.critical || 0, activeColor: '#dc2626', activeBg: '#fef2f2', activeBorder: '#fecaca', nav: '/alerts?severity=Critical' },
+    { label: 'High',     count: alertSummary?.high     || 0, activeColor: '#ea580c', activeBg: '#fff7ed', activeBorder: '#fed7aa', nav: '/alerts?severity=High'     },
+    { label: 'Medium',   count: alertSummary?.medium   || 0, activeColor: '#d97706', activeBg: '#fffbeb', activeBorder: '#fde68a', nav: '/alerts?severity=Medium'   },
+    { label: 'Low',      count: alertSummary?.low      || 0, activeColor: '#16a34a', activeBg: '#f0fdf4', activeBorder: '#bbf7d0', nav: '/alerts?severity=Low'      },
+    { label: 'All',      count: alertSummary?.total    || 0, activeColor: '#6366f1', activeBg: '#eef2ff', activeBorder: '#c7d2fe', nav: '/alerts'                   },
+  ];
 
   return (
-    <div>
+    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       <Navbar alertCount={vulnerableCount || alertSummary?.total || 0} />
 
-      <div className="dashboard-container">
-        {/* Welcome / Header */}
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.025em' }}>
-                  Vulnerability Monitoring Dashboard
-                </h1>
-                <span className="status-pill active">
-                  <span className="status-pill-dot"></span>
-                  Active Monitor
-                </span>
-              </div>
-              <p style={{ color: '#64748b', fontSize: '0.925rem', marginTop: 6 }}>
-                Real-time advisory intelligence tracking for your registered software infrastructure.
-              </p>
-            </div>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-            <button
-              onClick={handleRunMatching}
-              disabled={runningMatch}
-              className="btn-primary"
-              style={{ width: 'auto', padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}
-            >
-              <RefreshCw size={15} className={runningMatch ? 'animate-spin-fast' : ''} />
-              <span>{runningMatch ? 'Scanning Stack...' : 'Run Vulnerability Scan'}</span>
-            </button>
+        {/* ── Page Header ─────────────────────────── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14, marginBottom: 8 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h1 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.2 }}>
+                Vulnerability Monitor
+              </h1>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                fontSize: '0.72rem', fontWeight: 700, background: '#f0fdf4',
+                color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: 999, padding: '2px 10px',
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                Active Monitor
+              </span>
+            </div>
+            <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: 4 }}>
+              Real-time advisory intelligence for your registered software stack
+            </p>
           </div>
+          <button
+            onClick={handleRunMatching}
+            disabled={runningMatch}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px',
+              background: '#0f172a', color: '#fff', border: 'none', borderRadius: 10,
+              fontWeight: 700, fontSize: '0.875rem',
+              cursor: runningMatch ? 'not-allowed' : 'pointer',
+              opacity: runningMatch ? 0.7 : 1,
+              transition: 'opacity 0.15s',
+            }}
+          >
+            <RefreshCw size={15} style={{ animation: runningMatch ? 'spin 0.8s linear infinite' : 'none' }} />
+            {runningMatch ? 'Scanning…' : 'Run Vulnerability Scan'}
+          </button>
         </div>
 
-        {/* Scan Result Feedback Banner */}
+        {/* ── Scan Result Banner ───────────────────── */}
         {matchMessage && (
           <div style={{
             background: matchMessage.toLowerCase().includes('vulnerable') ? '#fef2f2' : '#f0fdf4',
             border: `1px solid ${matchMessage.toLowerCase().includes('vulnerable') ? '#fecaca' : '#bbf7d0'}`,
-            borderRadius: 10,
-            padding: '12px 16px',
-            fontSize: '0.875rem',
+            borderRadius: 10, padding: '12px 18px', fontSize: '0.875rem',
             color: matchMessage.toLowerCase().includes('vulnerable') ? '#991b1b' : '#166534',
-            marginBottom: 20,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
+            display: 'flex', alignItems: 'center', gap: 10,
+            animation: 'slideDown 0.25s cubic-bezier(0.16,1,0.3,1) forwards',
           }}>
-            {matchMessage.toLowerCase().includes('vulnerable') ? (
-              <AlertTriangle size={18} color="#dc2626" style={{ flexShrink: 0 }} />
-            ) : (
-              <CheckCircle2 size={18} color="#16a34a" style={{ flexShrink: 0 }} />
-            )}
+            {matchMessage.toLowerCase().includes('vulnerable')
+              ? <AlertTriangle size={18} color="#dc2626" style={{ flexShrink: 0 }} />
+              : <CheckCircle2 size={18} color="#16a34a" style={{ flexShrink: 0 }} />
+            }
             <span>{matchMessage}</span>
           </div>
         )}
 
-        {/* 1. Vulnerability Detection & Severity Cards */}
-        <div className="dashboard-card" style={{
-          borderLeft: vulnerableCount > 0 ? '4px solid #ef4444' : hasAlerts ? '4px solid #f59e0b' : '4px solid #10b981',
+        {/* ── VULNERABILITY DETECTION (main card) ─── */}
+        <div style={{
+          background: '#fff',
+          border: `1px solid ${vulnerableCount > 0 ? '#fecaca' : '#e2e8f0'}`,
+          borderLeft: `4px solid ${vulnerableCount > 0 ? '#ef4444' : isAllClear ? '#10b981' : '#e2e8f0'}`,
+          borderRadius: 14, padding: '24px',
+          boxShadow: vulnerableCount > 0 ? '0 2px 12px rgba(239,68,68,0.08)' : '0 1px 4px rgba(15,23,42,0.05)',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Bell size={20} color={vulnerableCount > 0 ? '#ef4444' : '#0f172a'} strokeWidth={2.2} />
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
-                  Vulnerability Detection
-                </h2>
-                {vulnerableCount > 0 ? (
-                  <span style={{
-                    background: '#fef2f2',
-                    color: '#dc2626',
-                    border: '1px solid #fecaca',
-                    borderRadius: 20,
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    padding: '2px 10px',
-                  }}>
-                    {vulnerableCount} Vulnerable
-                  </span>
-                ) : stackItems.length > 0 ? (
-                  <span style={{
-                    background: '#f0fdf4',
-                    color: '#16a34a',
-                    border: '1px solid #bbf7d0',
-                    borderRadius: 20,
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    padding: '2px 10px',
-                  }}>
-                    Clean / No Vulnerabilities
-                  </span>
-                ) : null}
-              </div>
-              <p style={{ color: '#64748b', fontSize: '0.875rem', maxWidth: 580 }}>
-                Exact installed versions evaluated against official vendor security advisories and version bounds.
-              </p>
+          {/* Card header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Bell size={20} color={vulnerableCount > 0 ? '#ef4444' : '#0f172a'} strokeWidth={2.2} />
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' }}>Vulnerability Detection</h2>
+              {vulnerableCount > 0 ? (
+                <span style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 20, fontSize: '0.72rem', fontWeight: 800, padding: '2px 10px' }}>
+                  {vulnerableCount} Vulnerable
+                </span>
+              ) : !loadingAlerts && (
+                <span style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700, padding: '2px 10px' }}>
+                  All Clear
+                </span>
+              )}
             </div>
-
-            <Link
-              to="/alerts"
-              className="btn-secondary"
-              style={{ width: 'auto', padding: '8px 16px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <span>View All Alerts</span>
-              <ArrowRight size={14} />
+            <Link to="/alerts" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+              border: '1px solid #e2e8f0', borderRadius: 8, textDecoration: 'none',
+              fontSize: '0.8rem', fontWeight: 600, color: '#0f172a', background: '#f8fafc',
+            }}>
+              View All Alerts <ArrowRight size={13} />
             </Link>
           </div>
 
+          {/* Severity tiles */}
           {loadingAlerts ? (
-            <div style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.9rem' }}>
-              Evaluating vulnerability intelligence...
+            <div style={{ padding: '28px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.9rem' }}>
+              Evaluating advisory intelligence…
             </div>
           ) : stackItems.length === 0 ? (
-            <div className="empty-state-card">
+            <div style={{
+              background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 10,
+              padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14,
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div className="empty-state-icon-sm">
-                  <Package size={22} color="#0f172a" />
+                <div style={{ background: '#f1f5f9', borderRadius: 10, padding: 12 }}>
+                  <Package size={22} color="#64748b" />
                 </div>
                 <div>
-                  <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.95rem' }}>
-                    No software registered for monitoring
-                  </div>
-                  <div style={{ color: '#64748b', fontSize: '0.825rem' }}>
-                    Add your operating systems, databases, web servers, or runtimes to begin automated advisory matching.
-                  </div>
+                  <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.9rem' }}>No software registered for monitoring</div>
+                  <div style={{ color: '#64748b', fontSize: '0.8rem', marginTop: 2 }}>Add your software stack to begin vulnerability scanning</div>
                 </div>
               </div>
-
-              <Link
-                to="/stack"
-                className="btn-primary"
-                style={{ width: 'auto', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              >
-                <Plus size={15} strokeWidth={2.2} />
-                <span>Add Monitored Technology</span>
+              <Link to="/stack" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px',
+                background: '#0f172a', color: '#fff', borderRadius: 10, textDecoration: 'none',
+                fontSize: '0.8rem', fontWeight: 700,
+              }}>
+                <Plus size={14} /> Add Software
               </Link>
             </div>
           ) : (
-            <div>
-              {/* Interactive Severity Breakdown Tiles */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12, marginBottom: 18 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+              {severityTiles.map(({ label, count, activeColor, activeBg, activeBorder, nav }) => (
                 <div
-                  onClick={() => navigate('/alerts?severity=Critical')}
+                  key={label}
+                  onClick={() => navigate(nav)}
+                  title={`View ${label} advisories`}
                   style={{
-                    background: (alertSummary?.critical || 0) > 0 ? '#fef2f2' : '#f8fafc',
-                    border: `1px solid ${(alertSummary?.critical || 0) > 0 ? '#fecaca' : '#e2e8f0'}`,
-                    borderRadius: 10,
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
+                    background: count > 0 ? activeBg : '#f8fafc',
+                    border: `1px solid ${count > 0 ? activeBorder : '#e2e8f0'}`,
+                    borderRadius: 12, padding: '16px 12px', textAlign: 'center',
+                    cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s',
                   }}
-                  title="Click to view Critical advisories"
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(15,23,42,0.1)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: (alertSummary?.critical || 0) > 0 ? '#dc2626' : '#94a3b8', lineHeight: 1 }}>
-                    {alertSummary?.critical || 0}
+                  <div style={{ fontSize: '1.9rem', fontWeight: 800, color: count > 0 ? activeColor : '#cbd5e1', lineHeight: 1 }}>
+                    {count}
                   </div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: (alertSummary?.critical || 0) > 0 ? '#dc2626' : '#64748b', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Critical
+                  <div style={{ fontSize: '0.68rem', fontWeight: 700, color: count > 0 ? activeColor : '#94a3b8', marginTop: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                    {label}
                   </div>
                 </div>
-
-                <div
-                  onClick={() => navigate('/alerts?severity=High')}
-                  style={{
-                    background: (alertSummary?.high || 0) > 0 ? '#fff7ed' : '#f8fafc',
-                    border: `1px solid ${(alertSummary?.high || 0) > 0 ? '#fed7aa' : '#e2e8f0'}`,
-                    borderRadius: 10,
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  title="Click to view High advisories"
-                >
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: (alertSummary?.high || 0) > 0 ? '#ea580c' : '#94a3b8', lineHeight: 1 }}>
-                    {alertSummary?.high || 0}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: (alertSummary?.high || 0) > 0 ? '#ea580c' : '#64748b', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    High
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => navigate('/alerts?severity=Medium')}
-                  style={{
-                    background: (alertSummary?.medium || 0) > 0 ? '#fffbeb' : '#f8fafc',
-                    border: `1px solid ${(alertSummary?.medium || 0) > 0 ? '#fde68a' : '#e2e8f0'}`,
-                    borderRadius: 10,
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  title="Click to view Medium advisories"
-                >
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: (alertSummary?.medium || 0) > 0 ? '#d97706' : '#94a3b8', lineHeight: 1 }}>
-                    {alertSummary?.medium || 0}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: (alertSummary?.medium || 0) > 0 ? '#d97706' : '#64748b', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Medium
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => navigate('/alerts?severity=Low')}
-                  style={{
-                    background: (alertSummary?.low || 0) > 0 ? '#f0fdf4' : '#f8fafc',
-                    border: `1px solid ${(alertSummary?.low || 0) > 0 ? '#bbf7d0' : '#e2e8f0'}`,
-                    borderRadius: 10,
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  title="Click to view Low advisories"
-                >
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: (alertSummary?.low || 0) > 0 ? '#16a34a' : '#94a3b8', lineHeight: 1 }}>
-                    {alertSummary?.low || 0}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: (alertSummary?.low || 0) > 0 ? '#16a34a' : '#64748b', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Low
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => navigate('/alerts')}
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 10,
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                  }}
-                  title="View all advisories"
-                >
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0f172a', lineHeight: 1 }}>
-                    {alertSummary?.total || 0}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Total Notices
-                  </div>
-                </div>
-              </div>
+              ))}
             </div>
           )}
         </div>
 
-        {/* 2. Monitored Stack & Advisory Coverage Matrix */}
-        <div className="dashboard-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Layers size={20} color="#0f172a" strokeWidth={2.2} />
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
-                  Monitored Stack & Advisory Coverage
-                </h2>
-                <span className="count-badge">
-                  {loadingStack ? '...' : `${stackItems.length} monitored`}
+        {/* ── Monitored Stack Coverage (collapsible) ── */}
+        {coverageItems.length > 0 && (
+          <CollapsibleSection
+            icon={<Layers size={18} color="#0f172a" strokeWidth={2.2} />}
+            title="Stack Coverage"
+            defaultOpen={false}
+            badge={
+              <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '2px 8px', fontWeight: 600 }}>
+                {coverageItems.length} products
+              </span>
+            }
+          >
+            {coverageData?.summary && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+                <span style={{ fontSize: '0.78rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
+                  Active Feeds: <strong>{coverageData.summary.supportedCount || 0}</strong>
                 </span>
-              </div>
-              <p style={{ color: '#64748b', fontSize: '0.875rem', maxWidth: 600 }}>
-                Transparent distinction between products with active official security feeds and catalog items pending advisory sources.
-              </p>
-            </div>
-
-            <Link
-              to="/stack"
-              className="btn-primary"
-              style={{ width: 'auto', padding: '9px 16px', textDecoration: 'none' }}
-            >
-              <span>Manage Stack</span>
-              <ArrowRight size={15} />
-            </Link>
-          </div>
-
-          {loadingStack ? (
-            <div style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.9rem' }}>
-              Checking monitored technologies...
-            </div>
-          ) : stackItems.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '16px 0', color: '#64748b' }}>
-              No software items registered yet.
-            </div>
-          ) : (
-            <div>
-              {/* Coverage stats pills */}
-              {coverageData && (
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-                  <span style={{ fontSize: '0.78rem', background: '#f1f5f9', color: '#475569', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
-                    Active Feed Coverage: <strong>{coverageData.summary?.supportedCount || 0}</strong> products
-                  </span>
-                  <span style={{ fontSize: '0.78rem', background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
-                    Pending Advisory Feed: <strong>{coverageData.summary?.unsupportedCount || 0}</strong> products
-                  </span>
-                </div>
-              )}
-
-              {/* Stack items coverage list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {(coverageData?.items || stackItems).slice(0, 6).map((item) => {
-                  const isVulnerable = item.healthStatus === 'vulnerable';
-                  const isSafe = item.healthStatus === 'safe';
-                  const isNeedsReview = item.healthStatus === 'needs_review';
-                  const isUnsupported = item.healthStatus === 'unsupported' || item.isSupported === false;
-
-                  return (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px 16px',
-                        background: '#fafbfd',
-                        border: `1px solid ${isVulnerable ? '#fecaca' : '#e2e8f0'}`,
-                        borderLeft: isVulnerable ? '4px solid #ef4444' : isSafe ? '4px solid #10b981' : isNeedsReview ? '4px solid #f59e0b' : '4px solid #cbd5e1',
-                        borderRadius: 8,
-                        gap: 12,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.95rem' }}>
-                              {item.productName || item.product_name}
-                            </span>
-                            <span className="version-pill-sm">
-                              v{item.installedVersion || item.installed_version}
-                            </span>
-                            {item.category && (
-                              <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#64748b', borderRadius: 6, padding: '2px 8px' }}>
-                                {item.category}
-                              </span>
-                            )}
-                          </div>
-                          {item.vendor && (
-                            <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: 2 }}>
-                              {item.vendor}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Status chip */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        {isVulnerable && (
-                          <span style={{
-                            background: '#fef2f2',
-                            color: '#dc2626',
-                            border: '1px solid #fecaca',
-                            borderRadius: 20,
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            padding: '3px 12px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 5,
-                          }}>
-                            <AlertTriangle size={13} />
-                            Vulnerable ({item.vulnerabilitiesCount || 1})
-                          </span>
-                        )}
-
-                        {isNeedsReview && (
-                          <span style={{
-                            background: '#fffbeb',
-                            color: '#d97706',
-                            border: '1px solid #fde68a',
-                            borderRadius: 20,
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            padding: '3px 12px',
-                          }}>
-                            Review Required
-                          </span>
-                        )}
-
-                        {isSafe && (
-                          <span style={{
-                            background: '#f0fdf4',
-                            color: '#16a34a',
-                            border: '1px solid #bbf7d0',
-                            borderRadius: 20,
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            padding: '3px 12px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 5,
-                          }}>
-                            <Check size={13} strokeWidth={2.5} />
-                            {item.statusLabel || 'Patched / Safe'}
-                          </span>
-                        )}
-
-                        {isUnsupported && (
-                          <span style={{
-                            background: '#f8fafc',
-                            color: '#64748b',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: 20,
-                            fontSize: '0.72rem',
-                            fontWeight: 500,
-                            padding: '3px 10px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }} title="No official advisory feed configured for this vendor in current version">
-                            <HelpCircle size={12} color="#94a3b8" />
-                            Feed Pending
-                          </span>
-                        )}
-
-                        <Link
-                          to="/alerts"
-                          style={{ fontSize: '0.8rem', color: '#0f172a', fontWeight: 600, textDecoration: 'none' }}
-                        >
-                          Advisories &rarr;
-                        </Link>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {stackItems.length > 6 && (
-                <div style={{ textAlign: 'right', marginTop: 12 }}>
-                  <Link to="/stack" style={{ fontSize: '0.8rem', color: '#0f172a', fontWeight: 600, textDecoration: 'none' }}>
-                    + View all {stackItems.length} software products in stack &rarr;
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 3. Account Overview Section */}
-        <div className="dashboard-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <ShieldCheck size={20} color="#0f172a" strokeWidth={2.2} />
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
-              Account Overview
-            </h2>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-            <div className="stat-tile">
-              <div className="stat-tile-label">Account Email</div>
-              <div className="stat-tile-value">{user?.email}</div>
-            </div>
-
-            <div className="stat-tile">
-              <div className="stat-tile-label">Account Status</div>
-              <div className="stat-tile-value" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Check size={16} strokeWidth={2.5} color="#10b981" />
-                <span>{user?.is_verified ? 'Verified & Active' : 'Unverified'}</span>
-              </div>
-            </div>
-
-            {user?.id && (
-              <div className="stat-tile">
-                <div className="stat-tile-label">Analyst ID</div>
-                <div className="stat-tile-value">#{user.id}</div>
+                <span style={{ fontSize: '0.78rem', background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 8, padding: '4px 10px', fontWeight: 600 }}>
+                  Pending Feeds: <strong>{coverageData.summary.unsupportedCount || 0}</strong>
+                </span>
               </div>
             )}
 
-            <div className="stat-tile">
-              <div className="stat-tile-label">Registered Since</div>
-              <div className="stat-tile-value">{formattedDate}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {coverageItems.map((item) => {
+                const isVulnerable = item.healthStatus === 'vulnerable';
+                const isSafe = item.healthStatus === 'safe';
+                const isNeedsReview = item.healthStatus === 'needs_review';
+                const isUnsupported = !item.isSupported;
+                return (
+                  <div key={item.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 14px',
+                    background: '#fafbfd',
+                    border: `1px solid ${isVulnerable ? '#fecaca' : '#e2e8f0'}`,
+                    borderLeft: `3px solid ${isVulnerable ? '#ef4444' : isSafe ? '#10b981' : isNeedsReview ? '#f59e0b' : '#cbd5e1'}`,
+                    borderRadius: 8, gap: 10, flexWrap: 'wrap',
+                  }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.875rem' }}>{item.productName}</span>
+                        <span style={{ fontSize: '0.72rem', background: '#f1f5f9', color: '#475569', borderRadius: 6, padding: '1px 7px', fontFamily: 'monospace', fontWeight: 600 }}>
+                          v{item.installedVersion}
+                        </span>
+                      </div>
+                      {item.vendor && <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 2 }}>{item.vendor}</div>}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {isVulnerable && (
+                        <span style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700, padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <AlertTriangle size={11} /> Vulnerable ({item.vulnerabilitiesCount || 1})
+                        </span>
+                      )}
+                      {isNeedsReview && (
+                        <span style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', borderRadius: 20, fontSize: '0.72rem', fontWeight: 600, padding: '2px 10px' }}>Review</span>
+                      )}
+                      {isSafe && (
+                        <span style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: 20, fontSize: '0.72rem', fontWeight: 600, padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <Check size={11} /> Safe
+                        </span>
+                      )}
+                      {isUnsupported && (
+                        <span style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 20, fontSize: '0.72rem', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          title="No official advisory feed configured for this vendor">
+                          <HelpCircle size={11} /> Feed Pending
+                        </span>
+                      )}
+                      <Link to="/alerts" style={{ fontSize: '0.75rem', color: '#6366f1', fontWeight: 600, textDecoration: 'none' }}>Alerts →</Link>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-        </div>
 
-        {/* 4. Account Security Section */}
-        <div className="dashboard-card" id="security">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <KeyRound size={20} color="#0f172a" strokeWidth={2.2} />
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
-              Account Security & Password
-            </h2>
-          </div>
-          <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: 20 }}>
-            To safeguard your vulnerability advisory monitoring, password updates require an authorization code sent to your registered email (<strong>{user?.email}</strong>).
-          </p>
-
-          {error && (
-            <div className="alert alert-error">
-              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {message && (
-            <div className="alert alert-success">
-              <Check size={16} strokeWidth={2.5} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>{message}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleChangePassword}>
-            <div className="form-group">
-              <label className="form-label">Current Password</label>
-              <input
-                type="password"
-                required
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="form-input"
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <div className="form-group">
-                <label className="form-label">New Password</label>
-                <div className="input-container">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="form-input"
-                    style={{ paddingRight: 40 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="password-toggle-btn"
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+            {stackItems.length > coverageItems.length && (
+              <div style={{ textAlign: 'right', marginTop: 12 }}>
+                <Link to="/stack" style={{ fontSize: '0.8rem', color: '#0f172a', fontWeight: 600, textDecoration: 'none' }}>
+                  + View all {stackItems.length} software products →
+                </Link>
               </div>
+            )}
+          </CollapsibleSection>
+        )}
 
-              <div className="form-group">
-                <label className="form-label">Confirm New Password</label>
+        {/* ── Account Overview (collapsible) ─────── */}
+        <CollapsibleSection
+          icon={<ShieldCheck size={18} color="#0f172a" strokeWidth={2.2} />}
+          title="Account Overview"
+          defaultOpen={false}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            {[
+              { label: 'Account Email',    value: user?.email },
+              { label: 'Account Status',   value: user?.is_verified ? '✓ Verified & Active' : 'Unverified' },
+              { label: 'Analyst ID',       value: user?.id ? `#${user.id}` : '—' },
+              { label: 'Registered Since', value: formattedDate },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 16px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.875rem', wordBreak: 'break-all' }}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+
+        {/* ── Account Security (collapsible) ──────── */}
+        <div id="security">
+          <CollapsibleSection
+            icon={<KeyRound size={18} color="#0f172a" strokeWidth={2.2} />}
+            title="Account Security & Password"
+            defaultOpen={false}
+          >
+            <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: 20 }}>
+              Password updates require an email verification code sent to <strong>{user?.email}</strong>.
+            </p>
+
+            {error && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <AlertCircle size={15} style={{ flexShrink: 0 }} /> {error}
+              </div>
+            )}
+
+            {message && (
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', color: '#16a34a', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <Check size={15} strokeWidth={2.5} style={{ flexShrink: 0 }} /> {message}
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>Current Password</label>
                 <input
-                  type="password"
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="form-input"
+                  type="password" required value={currentPassword}
+                  onChange={e => setCurrentPassword(e.target.value)} placeholder="••••••••••••"
+                  style={{ width: '100%', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
                 />
               </div>
-            </div>
 
-            {/* Verification Code Box */}
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: 20, borderRadius: 10, marginTop: 4, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.925rem', color: '#0f172a' }}>
-                    Email Verification Code
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                    Send code to <strong>{user?.email}</strong>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>New Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPassword ? 'text' : 'password'} required value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)} placeholder="••••••••••••"
+                      style={{ width: '100%', padding: '10px 40px 10px 14px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                    <button
+                      type="button" onClick={() => setShowPassword(!showPassword)} tabIndex={-1}
+                      style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, display: 'flex' }}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleRequestOtp}
-                  disabled={requestingOtp}
-                  className="btn-secondary"
-                >
-                  <RefreshCw size={13} className={requestingOtp ? 'animate-spin-fast' : ''} />
-                  {otpSent ? 'Resend Code' : 'Send Code'}
-                </button>
-              </div>
 
-              {otpSent && (
-                <div style={{ animation: 'stepFadeIn 0.3s ease forwards' }}>
-                  <OtpInput
-                    email={user?.email}
-                    purpose="CHANGE_PASSWORD"
-                    onOtpComplete={(code) => setOtpCode(code)}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>Confirm New Password</label>
+                  <input
+                    type="password" required value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••••••"
+                    style={{ width: '100%', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
                   />
                 </div>
-              )}
-            </div>
+              </div>
 
-            <button
-              type="submit"
-              disabled={submitting || !otpSent || otpCode.length !== 6}
-              className="btn-primary"
-            >
-              {submitting ? 'Updating Password...' : 'Confirm and Update Password'}
-            </button>
-          </form>
+              {/* Verification Code Box */}
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: 20, marginBottom: 18 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#0f172a' }}>Email Verification Code</div>
+                    <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Send code to <strong>{user?.email}</strong></div>
+                  </div>
+                  <button
+                    type="button" onClick={handleRequestOtp} disabled={requestingOtp}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', color: '#0f172a', fontSize: '0.8rem', fontWeight: 600, cursor: requestingOtp ? 'not-allowed' : 'pointer' }}
+                  >
+                    <RefreshCw size={13} style={{ animation: requestingOtp ? 'spin 0.8s linear infinite' : 'none' }} />
+                    {otpSent ? 'Resend Code' : 'Send Code'}
+                  </button>
+                </div>
+
+                {otpSent && (
+                  <div style={{ animation: 'slideDown 0.25s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+                    <OtpInput email={user?.email} purpose="CHANGE_PASSWORD" onOtpComplete={code => setOtpCode(code)} />
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting || !otpSent || otpCode.length !== 6}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px',
+                  background: submitting || !otpSent || otpCode.length !== 6 ? '#94a3b8' : '#0f172a',
+                  color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.875rem',
+                  cursor: submitting || !otpSent || otpCode.length !== 6 ? 'not-allowed' : 'pointer',
+                  transition: 'background 0.15s',
+                }}
+              >
+                {submitting ? 'Updating…' : 'Confirm and Update Password'}
+              </button>
+            </form>
+          </CollapsibleSection>
         </div>
+
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ const pool = require('./src/db');
 const matcherService = require('./src/services/matcher.service');
 const matchRepository = require('./src/repositories/match.repository');
 const advisoryCollectorService = require('./src/services/advisory_collector.service');
+const geminiService = require('./src/services/gemini.service');
 
 async function runTests() {
   console.log('\n===========================================');
@@ -175,6 +176,41 @@ async function runTests() {
       assert(hist.rows.length >= 1, 'Audit record persisted in review_history');
       assert(hist.rows[0].review_status === 'confirmed', 'Audit record status is confirmed');
     }
+
+    // ─────────────────────────────────────────────────────
+    // 6. Gemini AI Advisory Explanations & Caching
+    // ─────────────────────────────────────────────────────
+    console.log('\n[6] Testing: Gemini AI Integration & Graceful Fallback');
+
+    // Test unconfigured Gemini behavior
+    const prevKey = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+
+    assert(!geminiService.isConfigured(), 'Gemini service reports isConfigured = false when API key missing');
+    const unconfiguredRes = await geminiService.explainVulnerability({ cve_id: 'CVE-2024-4577', stack_product_name: 'PHP' });
+    assert(unconfiguredRes.configured === false, 'Returns configured: false gracefully');
+    assert(unconfiguredRes.success === false, 'Returns success: false gracefully');
+    assert(unconfiguredRes.message.includes('GEMINI_API_KEY'), 'Explains missing GEMINI_API_KEY clearly');
+
+    // Test saving and retrieving AI explanation cache
+    const mockExplanation = '### Executive Summary\nPHP CGI argument injection vulnerability.\n### Infrastructure Risk\nCritical remote code execution.\n### Remediation\nUpgrade to PHP 8.1.29 immediately.';
+    const saved = await matchRepository.saveAiExplanation(cve4577.id, testUserId, mockExplanation);
+    assert(!!saved, 'Saved AI explanation to matches table');
+    assert(saved.ai_explanation === mockExplanation, 'Persisted explanation matches input text');
+
+    // Verify findMatchById and findMatchesByUser return ai_explanation
+    const matchWithAi = await matchRepository.findMatchById(cve4577.id, testUserId);
+    assert(matchWithAi.ai_explanation === mockExplanation, 'findMatchById returns ai_explanation');
+
+    const { matches: userMatchesWithAi } = await matchRepository.findMatchesByUser(testUserId, { search: 'CVE-2024-4577' });
+    assert(userMatchesWithAi[0].ai_explanation === mockExplanation, 'findMatchesByUser returns ai_explanation');
+
+    // Test status='vulnerable' filter includes confirmed status
+    const { matches: vulnAndConfirmed } = await matchRepository.findMatchesByUser(testUserId, { status: 'vulnerable' });
+    const hasConfirmed = vulnAndConfirmed.some(m => m.id === cve4577.id && m.status === 'confirmed');
+    assert(hasConfirmed, 'Status filter status=vulnerable includes analyst-confirmed findings');
+
+    if (prevKey) process.env.GEMINI_API_KEY = prevKey;
 
     console.log('\n===========================================');
     console.log(`RESULTS: ${passed} passed, ${failed} failed`);

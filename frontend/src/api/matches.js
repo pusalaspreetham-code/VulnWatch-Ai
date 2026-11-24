@@ -34,6 +34,10 @@ export const matchesApi = {
   getMatchSummary: () => request('/summary'),
   getCoverageReport: () => request('/coverage'),
   getMatchById: (id) => request(`/${id}`),
+  explainMatch: (id, refresh = false) =>
+    request(`/${id}/explain${refresh ? '?refresh=true' : ''}`, {
+      method: 'POST',
+    }),
   updateMatchStatus: (id, status, notes) =>
     request(`/${id}/status`, {
       method: 'PATCH',

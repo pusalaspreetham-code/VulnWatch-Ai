@@ -52,11 +52,22 @@ body {
 @keyframes cardEntrance {
   0% {
     opacity: 0;
-    transform: translateY(18px) scale(0.985);
+    transform: translateY(14px) scale(0.98);
   }
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -91,12 +102,27 @@ body {
   }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 @keyframes spinSlow {
-  from {
-    transform: rotate(0deg);
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-spin-fast {
+  animation: spin 0.7s linear infinite;
+}
+
+/* Mobile nav responsive */
+@media (max-width: 768px) {
+  .nav-desktop-links {
+    display: none !important;
   }
-  to {
-    transform: rotate(360deg);
+  .nav-hamburger {
+    display: flex !important;
   }
 }
 

@@ -1,5 +1,6 @@
 const matcherService = require('../services/matcher.service');
 const matchRepository = require('../repositories/match.repository');
+const geminiService = require('../services/gemini.service');
 
 class MatchController {
   /**
@@ -143,6 +144,63 @@ class MatchController {
       }
 
       return res.status(200).json({ message: 'Match status updated.', id: updated.id, status: updated.status });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/matches/:id/explain
+   * Generate or retrieve an AI explanation for an existing vulnerability match.
+   * Grounded strictly in verified advisory data — deterministic matcher is single source of truth.
+   */
+  async explainMatch(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const id = parseInt(req.params.id, 10);
+      if (!id || isNaN(id)) {
+        return res.status(400).json({ message: 'Invalid match ID.' });
+      }
+
+      const match = await matchRepository.findMatchById(id, userId);
+      if (!match) {
+        return res.status(404).json({ message: 'Vulnerability match not found or access denied.' });
+      }
+
+      const refresh = req.query.refresh === 'true' || req.body?.refresh === true;
+
+      // If already explained and refresh is not requested, return cached explanation
+      if (match.ai_explanation && !refresh) {
+        return res.status(200).json({
+          success: true,
+          configured: true,
+          explanation: match.ai_explanation,
+          model: geminiService.getModel(),
+          cached: true,
+          explainedAt: match.ai_explained_at,
+          sourceUrl: match.source_url,
+          cveId: match.cve_id,
+        });
+      }
+
+      // Call Gemini API via backend service
+      const aiResult = await geminiService.explainVulnerability(match);
+
+      // If successfully generated, persist to database cache
+      if (aiResult.success && aiResult.explanation) {
+        await matchRepository.saveAiExplanation(id, userId, aiResult.explanation);
+      }
+
+      return res.status(200).json({
+        success: aiResult.success,
+        configured: aiResult.configured,
+        explanation: aiResult.explanation,
+        model: aiResult.model,
+        cached: false,
+        message: aiResult.message,
+        sourceUrl: match.source_url,
+        cveId: match.cve_id,
+      });
     } catch (err) {
       next(err);
     }

@@ -22,6 +22,9 @@ router.get('/', (req, res, next) => matchController.getMatches(req, res, next));
 // Single match detail
 router.get('/:id', (req, res, next) => matchController.getMatchById(req, res, next));
 
+// Explain vulnerability match using Gemini AI
+router.post('/:id/explain', (req, res, next) => matchController.explainMatch(req, res, next));
+
 // Update match status
 router.patch('/:id/status', (req, res, next) => matchController.updateStatus(req, res, next));
 

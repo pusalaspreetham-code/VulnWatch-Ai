@@ -244,10 +244,9 @@ export default function StackPage() {
   });
 
   return (
-    <div>
+    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       <Navbar />
-
-      <div className="dashboard-container">
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px', width: '100%' }}>
         {/* Page Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
           <div>

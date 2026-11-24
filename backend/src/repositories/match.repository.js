@@ -12,6 +12,7 @@ class MatchRepository {
       VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
       ON CONFLICT (stack_item_id, affected_product_id) DO UPDATE SET
         status = CASE 
+          WHEN EXCLUDED.status = 'not_affected' THEN 'not_affected'
           WHEN matches.status IN ('confirmed', 'dismissed') THEN matches.status
           ELSE EXCLUDED.status
         END,
@@ -33,8 +34,15 @@ class MatchRepository {
     const clauses = ['m.user_id = $1'];
 
     if (status && status.trim()) {
-      params.push(status.trim());
-      clauses.push(`m.status = $${params.length}`);
+      const st = status.trim();
+      if (st === 'vulnerable') {
+        clauses.push(`m.status IN ('vulnerable', 'confirmed')`);
+      } else if (st === 'potential_match' || st === 'needs_review') {
+        clauses.push(`m.status IN ('potential_match', 'needs_review')`);
+      } else {
+        params.push(st);
+        clauses.push(`m.status = $${params.length}`);
+      }
     }
 
     if (severity && severity.trim()) {
@@ -77,6 +85,8 @@ class MatchRepository {
         m.id,
         m.status,
         m.match_reason,
+        m.ai_explanation,
+        m.ai_explained_at,
         m.last_checked_at,
         m.created_at,
         -- Stack item fields
@@ -137,7 +147,7 @@ class MatchRepository {
   async findMatchById(id, userId) {
     const query = `
       SELECT
-        m.id, m.status, m.match_reason, m.last_checked_at, m.created_at, m.updated_at,
+        m.id, m.status, m.match_reason, m.ai_explanation, m.ai_explained_at, m.last_checked_at, m.created_at, m.updated_at,
         si.id              AS stack_item_id,
         si.product_name    AS stack_product_name,
         si.vendor          AS stack_vendor,
@@ -257,6 +267,20 @@ class MatchRepository {
     }
 
     return summary;
+  }
+
+  /**
+   * Save an AI-generated explanation for a match.
+   */
+  async saveAiExplanation(id, userId, explanation) {
+    const query = `
+      UPDATE matches
+      SET ai_explanation = $1, ai_explained_at = NOW(), updated_at = NOW()
+      WHERE id = $2 AND user_id = $3
+      RETURNING id, ai_explanation, ai_explained_at;
+    `;
+    const result = await pool.query(query, [explanation, id, userId]);
+    return result.rows[0] || null;
   }
 
   /**

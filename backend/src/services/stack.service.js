@@ -1,6 +1,8 @@
 const stackRepository = require('../repositories/stack.repository');
 const catalogRepository = require('../repositories/catalog.repository');
 const stackValidator = require('../validators/stack.validator');
+const matcherService = require('./matcher.service');
+const matchRepository = require('../repositories/match.repository');
 
 class StackService {
   async getStackItems(userId) {
@@ -47,7 +49,7 @@ class StackService {
       vendor = catalogItem.vendor || vendor;
     }
 
-    return stackRepository.create({
+    const created = await stackRepository.create({
       userId,
       catalogProductId: catalogProductId || null,
       vendor: vendor || null,
@@ -55,6 +57,13 @@ class StackService {
       installedVersion,
       notes: notes || null,
     });
+
+    // Automatically re-evaluate vulnerability matches in background
+    matcherService.runForUser(userId).catch(err => {
+      console.warn('[STACK AUTO-SCAN] Matcher failed in background:', err.message);
+    });
+
+    return created;
   }
 
   async updateStackItem(id, userId, data) {
@@ -124,6 +133,11 @@ class StackService {
       throw error;
     }
 
+    // Automatically re-evaluate vulnerability matches in background
+    matcherService.runForUser(userId).catch(err => {
+      console.warn('[STACK AUTO-SCAN] Matcher failed in background:', err.message);
+    });
+
     return updated;
   }
 
@@ -141,6 +155,11 @@ class StackService {
       error.statusCode = 404;
       throw error;
     }
+
+    // Clean up matches for deleted stack items
+    matchRepository.cleanStaleMatches(userId).catch(err => {
+      console.warn('[STACK CLEANUP] Stale match cleanup failed:', err.message);
+    });
 
     return { message: 'Stack item deleted successfully.', id: deleted.id };
   }
